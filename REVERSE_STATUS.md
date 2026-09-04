@@ -20,18 +20,53 @@ Goal:
 
 ## 1. MCU / memory map
 
-CONFIRMED: firmware is STM32F0-class.
+CORRECTED 2026-09-04: firmware is STM32F3-class (STM32F303), not STM32F0.
 
-Observed peripheral bases:
-- GPIO: `0x48000000`, `0x48000400`, `0x48000800`, `0x48000C00`, `0x48001000`
+Original STM32F0 conclusion was based only on GPIO/SYSCFG/USB/TIM15-17 base
+addresses, which are near-identical between STM32F0 and STM32F3 (shared bus
+layout) and therefore do not distinguish the two families. Corrected by
+independent verification against the official ST STM32F303.svd:
+
+- Vector table contains ADC1_2, USB_HP_CAN_TX, TIM8, ADC3, ADC4, and seven
+  individually-vectored DMA1 channels (DMA1_CH1..DMA1_CH7) — this exact
+  vector layout does not exist on any STM32F0 device (no TIM8/ADC3/ADC4,
+  different DMA vector grouping).
+- `0x50000000` (ADC1_2 common registers, STM32F3-specific bus placement;
+  STM32F0's ADC sits at `0x40012400` on a different bus) is referenced
+  directly in the firmware.
+- Initial stack pointer is `0x20009968`, i.e. ~39.4 KB into SRAM from
+  `0x20000000` — consistent with STM32F303xB/C's 40 KB SRAM; no
+  pin/feature-comparable STM32F0 part has enough SRAM to place the initial
+  SP that high.
+- GPIOB base `0x48000400` matches STM32F303's GPIOB address directly per
+  the official SVD (not merely "consistent with an F0 GPIO run").
+
+Observed peripheral bases (re-labeled per STM32F303.svd):
+- GPIO: `0x48000000` (GPIOA), `0x48000400` (GPIOB), `0x48000800` (GPIOC),
+  `0x48000C00` (GPIOD), `0x48001000` (GPIOE)
 - SYSCFG: `0x40010000` (including `0x40010008`)
 - USB: `0x40005C00`
 - TIM1: `0x40012C00`
-- TIM15: `0x40014000` (very high confidence)
-- TIM16: `0x40014400` (very high confidence)
-- TIM17: `0x40014800` (very high confidence)
+- TIM15: `0x40014000` (register layout confirmed via SVD; no direct
+  reference to it was found in the firmware — see note below)
+- TIM16: `0x40014400` (confirmed in use)
+- TIM17: `0x40014800` (register layout confirmed via SVD; no direct
+  reference to it was found in the firmware — see note below)
 
-Exact STM32F0 part number: UNKNOWN.
+Exact part number: image size (~158.7 KB for `nRLC_2_0_01.hex`, ~185 KB for
+`nRLC_2_0_12_FREEWARE.hex`) exceeds STM32F303CB's 128 KB Flash — actual
+silicon is CC/RC (256 KB) or larger, not CB, despite CB being what appears
+on the schematic silkscreen for this board. Confirm against the physical
+chip marking if available.
+
+Note on TIM15/TIM17: cross-referencing every SVD-labeled TIM15/TIM17
+register address against the firmware's actual instruction operands found
+zero direct hits for either timer. This does not disprove their use (code
+may reach them through a parameterized/indirect driver, the same pattern
+confirmed for GPIO_Init at `FUN_08005cac`), but the "TIM15/16/17-related"
+attribution for `FUN_08008384`/`FUN_080101b4` in section 10 should be
+downgraded from "high" to PROBABLE for the TIM15/TIM17 portion until direct
+evidence is found; TIM16 use is separately confirmed by direct reference.
 
 ## 2. Startup / main
 
@@ -91,7 +126,7 @@ Exact USB ISR: UNKNOWN.
 
 It configures mode/input/output/pull/alternate-function and EXTI-related state and accesses SYSCFG.
 
-Five GPIO base addresses are observed, consistent with GPIOA..GPIOE on an STM32F0 device.
+Five GPIO base addresses are observed: GPIOA..GPIOE on an STM32F303 device (confirmed per SVD, see section 1 correction above; not STM32F0).
 
 Exact MCU pinout and application signal names: UNKNOWN.
 
@@ -159,7 +194,7 @@ Protocol/parser structure: incomplete.
 
 ## 11. Not yet established
 
-- exact STM32F0 part number;
+- exact STM32F303 part number (CC vs RC vs other 256KB+ variant, given image size exceeds CB's 128KB — see section 1);
 - complete vector table;
 - exact IRQ -> handler mapping;
 - exact timer -> IRQ mapping;
@@ -209,6 +244,23 @@ In a new chat:
 > Continue the RLC reverse engineering from `REVERSE_STATUS.md`. Verify the repository for a newer version and continue from CURRENT TASK. Do not restart the analysis and do not invent unresolved hardware assignments.
 
 ## 15. Changelog
+
+### 2026-09-04 (correction)
+- CORRECTED: MCU family changed from "STM32F0-class" to STM32F303 (STM32F3).
+  Original conclusion relied on GPIO/SYSCFG/USB/TIM15-17 base addresses that
+  are shared between F0 and F3 and do not distinguish them. Corrected via
+  independent cross-check against the official STM32F303.svd: vector table
+  layout (ADC1_2/USB_HP_CAN_TX/TIM8/ADC3/ADC4/per-channel DMA1 vectors),
+  direct reference to ADC-common address `0x50000000` (F3-only bus
+  placement), and initial SP (`0x20009968`) consistent with F303's 40KB
+  SRAM. See section 1 for full evidence.
+- Downgraded TIM15/TIM17 attribution for `FUN_08008384`/`FUN_080101b4`
+  from "high" to PROBABLE: no direct register reference found for either
+  timer under exhaustive SVD-based address cross-referencing; TIM16 use
+  remains confirmed.
+- Flagged actual Flash size as CC/RC-class (256KB+), not CB (128KB) as
+  schematic silkscreen suggests — both known firmware images exceed CB's
+  capacity.
 
 ### 2026-09-04
 - Consolidated the known reverse-engineering state into a single handoff document.
