@@ -98,16 +98,34 @@ Important: do NOT identify its timer solely from function address/order.
 
 `FUN_0800604c(...)` — high confidence: IRQ priority configuration.
 
-Known enabled IRQ numbers:
+### 4.1 Vector table — CONFIRMED (direct read of nRLC_2_0_12_FREEWARE.hex vector table, cross-checked against the official STM32F303.svd interrupt map)
 
-| IRQ | Hex | Current status |
-|---:|---:|---|
-| 11 | `0x0B` | enabled; `FUN_0800019c` is associated candidate, exact vector mapping pending |
-| 20 | `0x14` | associated with USB peripheral `0x40005C00`; ISR unresolved |
-| 37 | `0x25` | enabled; peripheral/ISR unresolved |
-| 40 | `0x28` | enabled; peripheral/ISR unresolved |
-| 54 | `0x36` | enabled for a specific peripheral object; ISR unresolved |
-| 55 | `0x37` | enabled; peripheral/ISR unresolved |
+| IRQ | STM32F303 designation | Handler address | Status |
+|---:|---|---|---|
+| 11 | DMA1_CH1 | `0x08000644` | implemented |
+| 13 | DMA1_CH3 | `0x08004010` | implemented |
+| 14 | DMA1_CH4 | `0x0800401C` | implemented |
+| 15 | DMA1_CH5 | `0x08004028` | implemented |
+| 20 | USB_LP_CAN_RX0 | `0x080126E4` | implemented |
+| 37 | USART1_EXTI25 | `0x08010B5C` | implemented |
+| 40 | EXTI15_10 | `0x10000B28` | implemented; body relocated to CCM RAM (0x1000xxxx) |
+| 54 | TIM6_DACUNDER | `0x0800237C` | implemented |
+| 55 | TIM7 | `0x0800FF78` | implemented |
+| 56 | DMA2_CH1 | `0x08004034` | implemented |
+| 57 | DMA2_CH2 | `0x080023D2` | implemented |
+| 58 | DMA2_CH3 | `0x08004040` | implemented |
+| 59 | DMA2_CH4 | `0x080023D2` | **not implemented** — same address as default/unhandled-IRQ handler |
+| 60 | DMA2_CH5 | `0x080023D2` | **not implemented** — same address as default/unhandled-IRQ handler |
+| 61 | ADC4 | `0x080023D2` | **not implemented** — same address as default/unhandled-IRQ handler |
+
+Correction note: an earlier pass had IRQ54-59 mapped as
+DMA2_Channel1..DMA2_Channel4/ADC4 directly following IRQ40, which
+incorrectly skipped the TIM6_DACUNDER (54) and TIM7 (55) vector slots
+present in the real STM32F303 vector table. The table above replaces
+that mapping; it is a direct read of the vector table cross-checked
+against the SVD interrupt list, not a reconstruction from memory.
+
+### 4.2 Still open
 
 `FUN_08007770()` configures SysTick. SysTick handler remains unresolved.
 
