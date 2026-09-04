@@ -1,7 +1,7 @@
 # RLC Reverse Engineering — Status
 
 Repository: https://github.com/MussonOld/RLC
-Source: `nRLC_2_0_01.txt` (Ghidra decompile, 409 functions)
+Source: `nRLC_2_0_12_FREEWARE_ghidra_decompiled.txt` (Ghidra decompile, 413 functions)
 Notes: `1.txt`, `2.txt`, `3.txt`, `4.txt`
 Date: 2026-09-04
 
@@ -53,11 +53,10 @@ Observed peripheral bases (re-labeled per STM32F303.svd):
 - TIM17: `0x40014800` (register layout confirmed via SVD; no direct
   reference to it was found in the firmware — see note below)
 
-Exact part number: image size (~158.7 KB for `nRLC_2_0_01.hex`, ~185 KB for
-`nRLC_2_0_12_FREEWARE.hex`) exceeds STM32F303CB's 128 KB Flash — actual
-silicon is CC/RC (256 KB) or larger, not CB, despite CB being what appears
-on the schematic silkscreen for this board. Confirm against the physical
-chip marking if available.
+Exact part number: image size (~185 KB for `nRLC_2_0_12_FREEWARE.hex`)
+exceeds STM32F303CB's 128 KB Flash — actual silicon is CC/RC (256 KB) or
+larger, not CB, despite CB being what appears on the schematic silkscreen
+for this board. Confirm against the physical chip marking if available.
 
 Note on TIM15/TIM17: cross-referencing every SVD-labeled TIM15/TIM17
 register address against the firmware's actual instruction operands found
