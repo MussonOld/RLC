@@ -2,7 +2,6 @@
 
 Repository: https://github.com/MussonOld/RLC
 Source: `nRLC_2_0_12_FREEWARE_ghidra_decompiled.txt` (Ghidra decompile, 413 functions)
-Notes: `1.txt`, `2.txt`, `3.txt`, `4.txt`
 Date: 2026-09-04
 
 ## Current stage
@@ -10,6 +9,39 @@ Date: 2026-09-04
 
 Goal:
 `vector -> IRQ -> handler -> peripheral -> ISR purpose -> global data`
+
+### Agreed analysis order (2026-09-04)
+Anchor-first, not function-by-function guessing: establish who writes
+which peripheral registers and from what context before assigning
+meaning to any individual function.
+
+1. `Reset_Handler` at `0x080023B8` — anchor. Expect: `.data` init,
+   `.bss` clear, where control passes to `main`, which peripheral-init
+   functions get called from here. **DONE 2026-09-04 — see section 2.**
+   Result: 4-instruction trampoline calling `FUN_0800ff68` then tail-
+   chaining through `0x08000188` -> `FUN_08002d48` -> `FUN_08016274`
+   (confirmed main()). No explicit inline `.data`/`.bss` loop was found
+   in `Reset_Handler` itself — it must happen inside one of the three
+   called functions, not yet individually opened.
+2. `SysTick_Handler` at `0x0800FDCC` — what register/flag it touches,
+   whether there's a software tick/scheduler, actual period. **DONE
+   2026-09-04 — see section 4.2.** Result: resolves the `FUN_0800019c`
+   question from step-3-in-waiting — it's the SysTick body, reached by
+   tail-call, not a plain `bl`. Reload value / actual period still
+   open.
+3. Confirmed-vector ISRs, in this order (all addresses direct from the
+   vector table, see section 4.1):
+   `DMA1_CH1 0x08000644`, `DMA1_CH3 0x08004010`, `DMA1_CH4 0x0800401C`,
+   `DMA1_CH5 0x08004028`, `USB 0x080126E4`, `USART1 0x08010B5C`,
+   `TIM6 0x0800237C`, `TIM7 0x0800FF78`, `DMA2_CH1 0x08004034`,
+   `DMA2_CH3 0x08004040`. TIM6/TIM7 + DMA are the priority pair — likely
+   source of the real timing architecture.
+
+### Explicitly not doing yet
+- reconstructing `main.c` from Ghidra names;
+- assigning `FUN_0800019c` any purpose;
+- concluding a DMA channel's purpose from its channel number alone;
+- searching the binary blindly for PSC/ARR values.
 
 ## Rules
 - CONFIRMED = direct evidence from code/register/vector/xref.
@@ -67,17 +99,50 @@ attribution for `FUN_08008384`/`FUN_080101b4` in section 10 should be
 downgraded from "high" to PROBABLE for the TIM15/TIM17 portion until direct
 evidence is found; TIM16 use is separately confirmed by direct reference.
 
-## 2. Startup / main
+## 2. Startup / main — CONFIRMED 2026-09-04 (full traced chain, not pattern-matched)
 
-`thunk_FUN_08015fd4 @ 0x08000190` calls through `DAT_08000194`.
+Traced directly from `Reset_Handler` forward — every hop below is a
+verified `blx`/`bl`/tail-jump target read from the actual instruction
+operands and literal pool, not inferred from address proximity:
 
-`FUN_08015fd4 @ 0x08015fd4` is the strong candidate for application `main()`.
+```
+Reset_Handler (0x080023B8, 4 instructions total)
+  |-- blx FUN_0800ff68        (0 callees, touches no labeled peripheral —
+  |                             likely low-level setup: clock/FPU/watchdog)
+  `-- tail-jump (bx) -> trampoline @ 0x08000188
+        |-- reloads SP (ldr.w sp, [pc, #0xc])
+        |-- bl FUN_08002d48   (2 callees, no labeled peripheral — likely
+        |                       C runtime init: .data copy / .bss zero)
+        `-- tail-jump (bx, via literal) -> FUN_08016274
+              (84 callees; touches ADC4, CRC, DBGMCU, GPIOA, GPIOB,
+               GPIOC, IWDG, RCC, SPI1, TIM1, TIM16, TIM2, TIM3 —
+               this is CONFIRMED as the application main() equivalent:
+               broad hardware/peripheral init, matches the profile
+               previously found by pattern alone for 2.0.01's
+               FUN_08015fd4, but here established by direct call-chain
+               trace from Reset_Handler rather than inference)
+```
 
-It performs hardware/GPIO initialization, configuration loading, peripheral setup, then enters the application loop.
+`FUN_08016274` performs hardware/GPIO initialization, configuration
+loading, and peripheral setup, then (not yet traced further) presumably
+enters the application loop.
 
-`FUN_08000608()` appears to be a main-loop/application state-machine function, not an ISR.
+`FUN_0800019c` is NOT reachable through this chain — none of the four
+functions above call or jump to it. This doesn't resolve how
+`FUN_0800019c` is reached (see section 3), it only rules out "part of
+normal startup" as an explanation.
 
-## 3. ISR candidate — DOWNGRADED 2026-09-04
+`FUN_08000608()` appears to be a main-loop/application state-machine
+function, not an ISR (address/role carried over from prior analysis;
+not yet re-verified against 2.0.12 by direct trace).
+
+## 3. ISR candidate — status revised 2026-09-04, RESOLVED 2026-09-04 (see section 4.2)
+
+**Resolved: `FUN_0800019c` is the SysTick handler body, reached via a
+tail-call `b.w` branch from `SysTick_Handler` — see section 4.2 for the
+full evidence.** The reasoning trail below is kept for the record (it
+correctly identified that the "zero callers" finding was insufficient
+evidence of dead code, which is exactly what turned out to be true).
 
 `FUN_0800019c @ 0x0800019c` — was rated a strong ISR/periodic-handler
 candidate based on zero direct `bl` callers plus its body evidence
@@ -102,14 +167,17 @@ reached, since `bl`/raw-pointer search excludes the two more common
 mechanisms. None of the 14 tables have been decoded yet to confirm or
 rule out a jump target at `0x0800019c`.
 
-**Status: UNKNOWN — evidence for "ISR" downgraded from strong to
-unsupported.** The body evidence (counters/timing fields/periodic
-actions) still stands and doesn't rule out an ISR, but the original
-"strong candidate" rating rested on an assumption (no callers implies
-ISR) that a third dispatch mechanism (TBB/TBH) invalidates. Do not
-restate this as a confirmed or strong ISR candidate until a TBB/TBH
-table is actually decoded and shown to target this address, or a
-vector-table/pointer-table hit is found by some other means.
+**Status: no static caller found by the four mechanisms checked so far
+(direct `bl` call, vector table, raw pointer data, TBB/TBH jump table).
+This is NOT evidence that the function is dead/unreferenced — several
+untested reach mechanisms remain (see list below). Correct current
+formulation: "`FUN_0800019c` is not proven as an ISR and has no
+statically-discovered caller yet" — NOT "`FUN_0800019c` is dead code."**
+The body evidence (counters/timing fields/periodic actions) still
+stands and doesn't rule out an ISR; the original "strong candidate"
+rating rested on an assumption (no callers implies ISR) that a third
+dispatch mechanism (TBB/TBH) invalidates, so the confidence level is
+revised down to UNKNOWN pending further evidence, not down to "unused."
 
 **TBB/TBH decode result (this session): negative.** Decoded all 14
 TBB/TBH tables (bounds detected from the preceding `cmp`/bounds-check
@@ -121,17 +189,22 @@ checked so far (direct call, vector table, raw pointer, TBB/TBH jump
 table) explain how this function is invoked.**
 
 Remaining hypotheses, none yet investigated:
-- reached via a runtime-computed address (base register + arithmetic
-  offset) rather than any static table — would need dataflow tracing
-  from a `blx`/`bx` on a register, not a literal-pattern search;
-- `FUN_0800019c` is not actually a real function entry point — Ghidra
-  may have carved a function boundary at a point that is only reached
-  as a fallthrough continuation of the preceding function, and the
-  real (referenced) entry point is elsewhere; worth checking what
-  precedes `0x0800019c` in the binary and whether it's actually
-  reachable code at all;
+- called via a computed address held in a register (`BX`/`BLX Rn`)
+  where the register is loaded from something other than a static
+  literal or the tables checked so far;
+- address formed arithmetically at runtime (base + computed offset)
+  rather than read from any fixed table;
+- `FUN_0800019c` is an entry point reached by a mechanism other than an
+  ordinary call — e.g. a secondary/chained vector table, a bootloader
+  handoff, or similar — not yet checked;
+- the function boundary Ghidra assigned is imprecise — the real,
+  referenced entry point could be a different address within or
+  adjacent to this code, with `0x0800019c` merely a convenient (but
+  wrong) split point;
 - dead/unreferenced code (e.g. from a statically-linked library
-  routine never actually called by this build).
+  routine never actually called by this build) — listed for
+  completeness only; not privileged over the other hypotheses above
+  and not to be treated as a working conclusion.
 
 **Follow-up (same session): vector-table search completed exhaustively,
 still negative; retraction of a misreading.** The original vector-table
@@ -192,9 +265,38 @@ present in the real STM32F303 vector table. The table above replaces
 that mapping; it is a direct read of the vector table cross-checked
 against the SVD interrupt list, not a reconstruction from memory.
 
-### 4.2 Still open
+### 4.2 SysTick — RESOLVED 2026-09-04
 
-`FUN_08007770()` configures SysTick. SysTick handler remains unresolved.
+`SysTick_Handler @ 0x0800FDCC` (confirmed by vector table idx=15,
+Cortex-M exception 15 = SysTick, value `0x0800FDCD` matches exactly):
+
+```
+push {r4, lr}
+bl   FUN_08005f88      ; ordinary call, not yet opened
+pop  {r4, lr}
+b.w  0x0800019c          ; TAIL CALL (branch, not bl) into FUN_0800019c
+```
+
+This resolves the `FUN_0800019c` mystery from section 3: it is reached
+via an unconditional tail-call branch (`b.w`), not a `bl` instruction —
+which is exactly why every `bl`-based caller search in section 3 found
+zero results. It was never dead code; the reach mechanism just wasn't
+one of the four checked. **`FUN_0800019c` is CONFIRMED as the body of
+the SysTick handler**, executed on every SysTick tick after
+`SysTick_Handler` first calls `FUN_08005f88`. Section 3's original body
+evidence (counters, timing/event fields, periodic hardware actions) is
+now explained, not just consistent.
+
+`FUN_08005f88` — not yet opened; likely candidate for a millisecond
+tick counter or similar SysTick-adjacent bookkeeping, unconfirmed.
+
+Still open: SysTick reload value (`SYST_RVR`) / actual tick period not
+yet extracted — needed to convert `FUN_0800019c`'s counters into real
+time units.
+
+`FUN_08007770()` was previously listed as "configures SysTick" — this
+was a 2.0.01 address never re-verified for 2.0.12 (see the stale-table
+warning in section 10); do not rely on it until re-checked.
 
 ## 5. USB
 
@@ -260,21 +362,33 @@ Protocol/parser structure: incomplete.
 
 ## 10. Important functions
 
+**⚠ STALE TABLE — flagged 2026-09-04, not yet fixed.** All rows below
+were established against `nRLC_2_0_01.hex`. When this session switched
+the analysis target to `nRLC_2_0_12_FREEWARE.hex`, these addresses were
+never re-verified. Direct check just now: of the 11 addresses below,
+**only `FUN_0800019c` still resolves to a function at the same address
+in 2.0.12** (confirmed coincidentally while tracing Reset_Handler); the
+other 10 do NOT exist at these addresses in the 2.0.12 build (function
+layout shifted between versions). Do not treat any "high confidence"
+rating below as applying to 2.0.12 until each row is individually
+re-resolved against the current binary — treat this whole table as
+UNKNOWN/unverified-for-2.0.12 except the two rows marked CONFIRMED.
+
 | Address | Ghidra function | Current interpretation | Confidence |
 |---|---|---|---|
-| `0x08000190` | `thunk_FUN_08015fd4` | startup/reset trampoline | high |
-| `0x0800019C` | `FUN_0800019c` | periodic ISR candidate | high for ISR role; peripheral unknown |
-| `0x08003418` | `FUN_08003418` | peripheral setup + IRQ enable/start sequence | high |
-| `0x080045C4` | `FUN_080045c4` | configuration parameter access | high |
-| `0x08005CAC` | `FUN_08005cac` | GPIO/EXTI low-level configuration | high |
-| `0x0800602E` | `FUN_0800602e` | NVIC IRQ enable | high |
-| `0x0800604C` | `FUN_0800604c` | NVIC priority setup | high |
-| `0x08007770` | `FUN_08007770` | SysTick configuration | high |
-| `0x08007924` | `FUN_08007924` | peripheral clock/setup dispatcher | high |
-| `0x08008384` | `FUN_08008384` | timer/peripheral initialization | high |
-| `0x080101B4` | `FUN_080101b4` | TIM15/16/17-related code | high |
-| `0x08015FD4` | `FUN_08015fd4` | main candidate | high |
-| `0x08000608` | `FUN_08000608` | application state machine | probable |
+| `0x080023B8` | `Reset_Handler` | reset entry — CONFIRMED 2026-09-04 for 2.0.12, see section 2 | high (2.0.12) |
+| `0x0800FF68`, `0x08002D48`, `0x08016274` | startup chain (see section 2) | clock/FPU/wdg init, C runtime init, main() | high (2.0.12) |
+| `0x0800019C` | `FUN_0800019c` | **RESOLVED**: body of SysTick handler, reached via tail-call `b.w` from `SysTick_Handler` — see section 4.2 | confirmed |
+| `0x08003418` | `FUN_08003418` (2.0.01 address) | peripheral setup + IRQ enable/start sequence | **unverified for 2.0.12 — address does not resolve** |
+| `0x080045C4` | `FUN_080045c4` (2.0.01 address) | configuration parameter access | **unverified for 2.0.12 — address does not resolve** |
+| `0x08005CAC` | `FUN_08005cac` (2.0.01 address) | GPIO/EXTI low-level configuration | **unverified for 2.0.12 — address does not resolve** |
+| `0x0800602E` | `FUN_0800602e` (2.0.01 address) | NVIC IRQ enable | **unverified for 2.0.12 — address does not resolve** |
+| `0x0800604C` | `FUN_0800604c` (2.0.01 address) | NVIC priority setup | **unverified for 2.0.12 — address does not resolve** |
+| `0x08007770` | `FUN_08007770` (2.0.01 address) | SysTick configuration | **unverified for 2.0.12 — address does not resolve; see section 4.2, real SysTick anchor for 2.0.12 is `0x0800FDCC`** |
+| `0x08007924` | `FUN_08007924` (2.0.01 address) | peripheral clock/setup dispatcher | **unverified for 2.0.12 — address does not resolve** |
+| `0x08008384` | `FUN_08008384` (2.0.01 address) | timer/peripheral initialization | **unverified for 2.0.12 — address does not resolve** |
+| `0x080101B4` | `FUN_080101b4` (2.0.01 address) | TIM15/16/17-related code | **unverified for 2.0.12 — address does not resolve** |
+| `0x08000608` | `FUN_08000608` (2.0.01 address) | application state machine | **unverified for 2.0.12 — address does not resolve** |
 
 ## 11. Not yet established
 
