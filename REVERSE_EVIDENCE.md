@@ -1,7 +1,7 @@
 # RLC Reverse Engineering — Evidence Dossier
 
 **Repository:** https://github.com/MussonOld/RLC  
-**Source dump:** `nRLC_2_0_01.txt` — Ghidra decompile, 409 functions  
+**Source dump:** `nRLC_2_0_12_FREEWARE_ghidra_decompiled.txt` — Ghidra decompile, 413 functions  
 **Working notes:** `1.txt`, `2.txt`, `3.txt`, `4.txt`  
 **Status document:** `REVERSE_STATUS.md`  
 **Date:** 2026-09-04
@@ -56,10 +56,10 @@ official STM32F303.svd:
 
 Five GPIO bases are GPIOA..GPIOE on an STM32F303 device (confirmed per SVD).
 
-**Part number:** exact variant still not pinned down, but both known
-firmware images (`nRLC_2_0_01.hex` ~158.7KB, `nRLC_2_0_12_FREEWARE.hex`
-~185KB) exceed STM32F303CB's 128KB Flash — actual silicon is CC/RC
-(256KB) or larger, despite CB appearing on the board schematic silkscreen.
+**Part number:** exact variant still not pinned down, but the known
+firmware image (`nRLC_2_0_12_FREEWARE.hex`, ~185KB) exceeds STM32F303CB's
+128KB Flash — actual silicon is CC/RC (256KB) or larger, despite CB
+appearing on the board schematic silkscreen.
 
 ---
 
@@ -589,11 +589,9 @@ Do not skip directly from register addresses to a guessed `.ioc`.
 
 Primary reverse-engineering material in repository:
 
-- `nRLC_2_0_01.txt` — raw Ghidra decompile.
-- `1.txt` — initial reverse-engineering observations.
-- `2.txt` — reconstruction plan and vector/IRQ roadmap.
-- `3.txt` — main/configuration/ISR observations.
-- `4.txt` — interrupt/peripheral/timer/USB follow-up observations.
+- `nRLC_2_0_12_FREEWARE.hex` — firmware image (analysis target).
+- `nRLC_2_0_12_FREEWARE_ghidra_decompiled.txt` — raw Ghidra decompile (413 functions).
+- `nRLC_2_0_12_FREEWARE_peripheral_xref.txt` — peripheral-to-function cross-reference map.
 - `REVERSE_STATUS.md` — current project status and handoff state.
 
 Repository: https://github.com/MussonOld/RLC
