@@ -111,6 +111,28 @@ restate this as a confirmed or strong ISR candidate until a TBB/TBH
 table is actually decoded and shown to target this address, or a
 vector-table/pointer-table hit is found by some other means.
 
+**TBB/TBH decode result (this session): negative.** Decoded all 14
+TBB/TBH tables (bounds detected from the preceding `cmp`/bounds-check
+instruction, plus a generous 60-entry re-scan at both possible table
+alignments as a safety margin) — none of the 14 tables contain an entry
+resolving to `0x0800019c`. Combined with the vector-table and raw-
+pointer-data searches above, **none of the four reach mechanisms
+checked so far (direct call, vector table, raw pointer, TBB/TBH jump
+table) explain how this function is invoked.**
+
+Remaining hypotheses, none yet investigated:
+- reached via a runtime-computed address (base register + arithmetic
+  offset) rather than any static table — would need dataflow tracing
+  from a `blx`/`bx` on a register, not a literal-pattern search;
+- `FUN_0800019c` is not actually a real function entry point — Ghidra
+  may have carved a function boundary at a point that is only reached
+  as a fallthrough continuation of the preceding function, and the
+  real (referenced) entry point is elsewhere; worth checking what
+  precedes `0x0800019c` in the binary and whether it's actually
+  reachable code at all;
+- dead/unreferenced code (e.g. from a statically-linked library
+  routine never actually called by this build).
+
 Important: do NOT identify its timer solely from function address/order.
 
 ## 4. NVIC / IRQ evidence
@@ -267,7 +289,7 @@ Protocol/parser structure: incomplete.
 1. Recover the actual vector table/startup representation. — DONE 2026-09-04
 2. Map each vector entry to an address. — DONE for IRQ 11/13/14/15/20/37/40/54-61 (see 4.1)
 3. Match handler addresses against the Ghidra functions. — partially done
-4. Resolve IRQ 11 and prove/disprove `FUN_0800019c` mapping. — DISPROVED as a vector-table match (see section 3); new task: decode the 14 TBB/TBH jump tables (addresses listed in section 3) and check whether any targets `0x0800019c`
+4. Resolve IRQ 11 and prove/disprove `FUN_0800019c` mapping. — DISPROVED as a vector-table match; TBB/TBH hypothesis also checked and DISPROVED (all 14 tables decoded, no match). New task: trace via computed-address dataflow, or verify `0x0800019c` is a real function entry point at all (see section 3)
 5. Resolve IRQ 20 / USB ISR.
 6. ~~Resolve IRQ 54 and its peripheral.~~ RESOLVED 2026-09-04: IRQ54 = TIM6_DACUNDER (see 4.1)
 7. ~~Resolve IRQ 37, 40, 55.~~ RESOLVED 2026-09-04 (IRQ37=USART1, IRQ40=EXTI15_10, IRQ55=TIM7 — see 4.1)
