@@ -133,6 +133,30 @@ Remaining hypotheses, none yet investigated:
 - dead/unreferenced code (e.g. from a statically-linked library
   routine never actually called by this build).
 
+**Follow-up (same session): vector-table search completed exhaustively,
+still negative; retraction of a misreading.** The original vector-table
+search (idx 0..99) missed the table's final entry (idx 100 = IRQ84 =
+SPI4); re-checked through idx 105 — still zero matches for
+`0x0800019c`/`0x0800019d`. The real vector table runs `idx 0..100`
+(addresses `0x08000000`-`0x08000190`), ending at IRQ84, immediately
+followed by a small literal pool (values `0x08016275` and `0x20009968`
+at idx 101/102 are data, not vector entries — they are constants read
+by a `ldr r0,[pc,#0]; bx r0` computed-jump sequence at
+`0x08000190`-`0x08000192`, targeting `0x08016275`). An earlier note in
+this section describing this region as a "mini Reset_Handler /
+possible embedded secondary image" was a misreading — it's ordinary
+vector-table tail + literal pool + one computed jump unrelated to
+`FUN_0800019c`, not a distinct embedded structure. `FUN_0800019c`
+begins immediately after this literal pool at `0x0800019c`, which
+appears to be coincidental placement, not evidence of anything.
+
+Net effect: the vector-table hypothesis is now confirmed exhaustively
+dead (not just "likely" dead). The three remaining hypotheses above are
+unchanged; the computed-address-dataflow route is probably the most
+promising next step, given a `bx r0`-style computed jump was just found
+one function earlier in the image — worth checking whether similar
+patterns elsewhere in the firmware target `0x0800019c` specifically.
+
 Important: do NOT identify its timer solely from function address/order.
 
 ## 4. NVIC / IRQ evidence
