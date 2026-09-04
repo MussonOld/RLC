@@ -77,18 +77,39 @@ It performs hardware/GPIO initialization, configuration loading, peripheral setu
 
 `FUN_08000608()` appears to be a main-loop/application state-machine function, not an ISR.
 
-## 3. ISR candidate
+## 3. ISR candidate — DOWNGRADED 2026-09-04
 
-`FUN_0800019c @ 0x0800019c` is a strong ISR/periodic-handler candidate.
+`FUN_0800019c @ 0x0800019c` — was rated a strong ISR/periodic-handler
+candidate based on zero direct `bl` callers plus its body evidence
+(counters, timing/event fields, periodic hardware actions).
 
-Evidence from its body:
-- repeatedly updates counters;
-- maintains timing/event fields in the structure at `DAT_080004ec`;
-- sets event/flag bytes;
-- performs periodic hardware actions;
-- contains no obvious normal application entry semantics.
+**Vector-table check (this session): direct disproof of ISR-via-vector.**
+Read the full vector table of `nRLC_2_0_12_FREEWARE.hex` (first 100
+entries, IRQ -16..84) and searched for `0x0800019c` — not present at any
+vector slot. Also searched the entire firmware image for the literal
+32-bit value `0x0800019c`/`0x0800019d` (Thumb-bit set) as raw data — zero
+occurrences anywhere, meaning it is not stored in any plain
+function-pointer table either.
 
-Exact IRQ/vector mapping is still UNKNOWN and must be recovered from vector/startup evidence.
+**New lead:** the firmware contains 14 Thumb-2 `TBB`/`TBH` instructions
+(compact PC-relative jump tables, typically compiled from `switch`
+statements) at addresses including `0x08002258`, `0x0800c7c2`,
+`0x0800c862`, `0x0800c9a4`, `0x0800caa6`, `0x0800cd50`, `0x0800df0a`,
+`0x0800fd34`, `0x08010714`, `0x08010736` (+4 more, see decompile). This
+is the most likely way `FUN_0800019c` — and possibly the command
+dispatcher behind the confirmed command strings in section 9 — is
+reached, since `bl`/raw-pointer search excludes the two more common
+mechanisms. None of the 14 tables have been decoded yet to confirm or
+rule out a jump target at `0x0800019c`.
+
+**Status: UNKNOWN — evidence for "ISR" downgraded from strong to
+unsupported.** The body evidence (counters/timing fields/periodic
+actions) still stands and doesn't rule out an ISR, but the original
+"strong candidate" rating rested on an assumption (no callers implies
+ISR) that a third dispatch mechanism (TBB/TBH) invalidates. Do not
+restate this as a confirmed or strong ISR candidate until a TBB/TBH
+table is actually decoded and shown to target this address, or a
+vector-table/pointer-table hit is found by some other means.
 
 Important: do NOT identify its timer solely from function address/order.
 
@@ -243,13 +264,13 @@ Protocol/parser structure: incomplete.
 
 ## 13. Next concrete actions
 
-1. Recover the actual vector table/startup representation.
-2. Map each vector entry to an address.
-3. Match handler addresses against the 409 Ghidra functions.
-4. Resolve IRQ 11 and prove/disprove `FUN_0800019c` mapping.
+1. Recover the actual vector table/startup representation. — DONE 2026-09-04
+2. Map each vector entry to an address. — DONE for IRQ 11/13/14/15/20/37/40/54-61 (see 4.1)
+3. Match handler addresses against the Ghidra functions. — partially done
+4. Resolve IRQ 11 and prove/disprove `FUN_0800019c` mapping. — DISPROVED as a vector-table match (see section 3); new task: decode the 14 TBB/TBH jump tables (addresses listed in section 3) and check whether any targets `0x0800019c`
 5. Resolve IRQ 20 / USB ISR.
-6. Resolve IRQ 54 and its peripheral.
-7. Resolve IRQ 37, 40, 55.
+6. ~~Resolve IRQ 54 and its peripheral.~~ RESOLVED 2026-09-04: IRQ54 = TIM6_DACUNDER (see 4.1)
+7. ~~Resolve IRQ 37, 40, 55.~~ RESOLVED 2026-09-04 (IRQ37=USART1, IRQ40=EXTI15_10, IRQ55=TIM7 — see 4.1)
 8. Resolve SysTick handler.
 9. Extract timer clock/PSC/ARR values and derive periods.
 10. Update this document with evidence, not assumptions.
