@@ -24,28 +24,42 @@ The rule for reconstruction is: **do not turn a probable interpretation into a p
 
 ### 1.1 MCU family
 
-**CONFIRMED:** the firmware is for an STM32F0-class device.
+**CORRECTED 2026-09-04:** the firmware is for an STM32F303 (STM32F3-class)
+device, not STM32F0 as originally concluded. The addresses below are
+near-identical between F0 and F3 (shared AHB2/APB bus layout) and by
+themselves do not distinguish the families — that was the error. Family
+was re-established via: vector table entries with no STM32F0 equivalent
+(ADC1_2, USB_HP_CAN_TX, TIM8, ADC3, ADC4, per-channel DMA1_CH1..CH7 vectors);
+a direct firmware reference to `0x50000000` (ADC1_2 common — F3-specific
+bus placement; F0's ADC is at `0x40012400` on a different bus entirely);
+and initial SP `0x20009968` (~39.4KB into SRAM), consistent only with
+STM32F303xB/C's 40KB SRAM.
 
-Observed peripheral address ranges in the decompile include:
+Observed peripheral address ranges in the decompile, re-labeled per the
+official STM32F303.svd:
 
 | Address | Interpretation | Confidence |
 |---|---|---|
-| `0x48000000` | GPIO port base | confirmed |
-| `0x48000400` | GPIO port base | confirmed |
-| `0x48000800` | GPIO port base | confirmed |
-| `0x48000C00` | GPIO port base | confirmed |
-| `0x48001000` | GPIO port base | confirmed |
+| `0x48000000` | GPIOA | confirmed (SVD) |
+| `0x48000400` | GPIOB | confirmed (SVD) |
+| `0x48000800` | GPIOC | confirmed (SVD) |
+| `0x48000C00` | GPIOD | confirmed (SVD) |
+| `0x48001000` | GPIOE | confirmed (SVD) |
 | `0x40010000` | SYSCFG | confirmed |
 | `0x40010008` | SYSCFG EXTICR-related access | high |
 | `0x40005C00` | USB peripheral | very high |
 | `0x40012C00` | TIM1 | confirmed |
-| `0x40014000` | TIM15 | very high |
-| `0x40014400` | TIM16 | very high |
-| `0x40014800` | TIM17 | very high |
+| `0x40014000` | TIM15 | register layout confirmed (SVD); no direct firmware reference found — downgrade attribution to PROBABLE |
+| `0x40014400` | TIM16 | confirmed in use (direct reference) |
+| `0x40014800` | TIM17 | register layout confirmed (SVD); no direct firmware reference found — downgrade attribution to PROBABLE |
+| `0x50000000` | ADC1_2 common (F3-specific) | confirmed (direct reference; decisive family evidence) |
 
-Five GPIO bases are consistent with GPIOA..GPIOE on an STM32F0 device, but the exact MCU ordering/package and complete pinout are not yet proven.
+Five GPIO bases are GPIOA..GPIOE on an STM32F303 device (confirmed per SVD).
 
-**UNKNOWN:** exact STM32F0 part number.
+**Part number:** exact variant still not pinned down, but both known
+firmware images (`nRLC_2_0_01.hex` ~158.7KB, `nRLC_2_0_12_FREEWARE.hex`
+~185KB) exceed STM32F303CB's 128KB Flash — actual silicon is CC/RC
+(256KB) or larger, despite CB appearing on the board schematic silkscreen.
 
 ---
 
@@ -155,7 +169,7 @@ The enabled IRQ number alone is not enough to assign a handler. The final mappin
 
 ## 5. USB evidence
 
-Peripheral base `0x40005C00` is very strongly consistent with the STM32F0 USB peripheral.
+Peripheral base `0x40005C00` is the USB peripheral (address shared between STM32F0 and STM32F303; not family-distinguishing on its own — see section 1 correction for the actual family evidence).
 
 A separate IRQ `0x14` (decimal 20) is associated with this peripheral setup.
 
@@ -203,7 +217,7 @@ Observed SYSCFG-related address:
 0x40010008
 ```
 
-This is strong evidence for GPIO + SYSCFG/EXTI configuration on STM32F0.
+This is strong evidence for GPIO + SYSCFG/EXTI configuration on STM32F303 (address range shared with F0; see section 1 for the family-distinguishing evidence).
 
 ### Reconstruction target
 
@@ -467,12 +481,17 @@ This is one reason the interrupt map must be reconstructed before rewriting the 
 
 ### Established with high confidence
 
-- STM32F0-class target.
-- GPIO peripheral region and five observed GPIO bases.
+- STM32F303 (STM32F3-class) target — corrected 2026-09-04 from an earlier
+  "STM32F0-class" conclusion; see section 1.
+- GPIO peripheral region and five observed GPIO bases (GPIOA..E, confirmed per SVD).
 - SYSCFG/EXTI involvement.
 - TIM1 at `0x40012C00`.
-- TIM15/16/17 at `0x40014000/0x40014400/0x40014800`.
+- TIM16 at `0x40014400` (confirmed by direct reference). TIM15/TIM17
+  register layout at `0x40014000`/`0x40014800` confirmed per SVD, but no
+  direct firmware reference found — downgraded to PROBABLE.
 - USB peripheral at `0x40005C00`.
+- Direct reference to `0x50000000` (ADC1_2 common, F3-specific) — the
+  decisive evidence for the family correction above.
 - `FUN_08015fd4()` as the main/application-entry candidate.
 - `FUN_0800602e()` as NVIC IRQ enable helper.
 - `FUN_0800604c()` as IRQ-priority helper.
@@ -484,7 +503,8 @@ This is one reason the interrupt map must be reconstructed before rewriting the 
 
 ### Not yet established
 
-- exact STM32F0 part number;
+- exact STM32F303 part number (image size on both known firmware builds
+  exceeds CB's 128KB, so actual silicon is CC/RC or larger, not CB);
 - complete vector table;
 - exact vector -> IRQ -> handler mapping;
 - exact timer -> IRQ mapping;
