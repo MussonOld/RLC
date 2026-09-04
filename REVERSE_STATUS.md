@@ -77,18 +77,61 @@ It performs hardware/GPIO initialization, configuration loading, peripheral setu
 
 `FUN_08000608()` appears to be a main-loop/application state-machine function, not an ISR.
 
-## 3. ISR candidate
+## 3. ISR candidate — DOWNGRADED 2026-09-04
 
-`FUN_0800019c @ 0x0800019c` is a strong ISR/periodic-handler candidate.
+`FUN_0800019c @ 0x0800019c` — was rated a strong ISR/periodic-handler
+candidate based on zero direct `bl` callers plus its body evidence
+(counters, timing/event fields, periodic hardware actions).
 
-Evidence from its body:
-- repeatedly updates counters;
-- maintains timing/event fields in the structure at `DAT_080004ec`;
-- sets event/flag bytes;
-- performs periodic hardware actions;
-- contains no obvious normal application entry semantics.
+**Vector-table check (this session): direct disproof of ISR-via-vector.**
+Read the full vector table of `nRLC_2_0_12_FREEWARE.hex` (first 100
+entries, IRQ -16..84) and searched for `0x0800019c` — not present at any
+vector slot. Also searched the entire firmware image for the literal
+32-bit value `0x0800019c`/`0x0800019d` (Thumb-bit set) as raw data — zero
+occurrences anywhere, meaning it is not stored in any plain
+function-pointer table either.
 
-Exact IRQ/vector mapping is still UNKNOWN and must be recovered from vector/startup evidence.
+**New lead:** the firmware contains 14 Thumb-2 `TBB`/`TBH` instructions
+(compact PC-relative jump tables, typically compiled from `switch`
+statements) at addresses including `0x08002258`, `0x0800c7c2`,
+`0x0800c862`, `0x0800c9a4`, `0x0800caa6`, `0x0800cd50`, `0x0800df0a`,
+`0x0800fd34`, `0x08010714`, `0x08010736` (+4 more, see decompile). This
+is the most likely way `FUN_0800019c` — and possibly the command
+dispatcher behind the confirmed command strings in section 9 — is
+reached, since `bl`/raw-pointer search excludes the two more common
+mechanisms. None of the 14 tables have been decoded yet to confirm or
+rule out a jump target at `0x0800019c`.
+
+**Status: UNKNOWN — evidence for "ISR" downgraded from strong to
+unsupported.** The body evidence (counters/timing fields/periodic
+actions) still stands and doesn't rule out an ISR, but the original
+"strong candidate" rating rested on an assumption (no callers implies
+ISR) that a third dispatch mechanism (TBB/TBH) invalidates. Do not
+restate this as a confirmed or strong ISR candidate until a TBB/TBH
+table is actually decoded and shown to target this address, or a
+vector-table/pointer-table hit is found by some other means.
+
+**TBB/TBH decode result (this session): negative.** Decoded all 14
+TBB/TBH tables (bounds detected from the preceding `cmp`/bounds-check
+instruction, plus a generous 60-entry re-scan at both possible table
+alignments as a safety margin) — none of the 14 tables contain an entry
+resolving to `0x0800019c`. Combined with the vector-table and raw-
+pointer-data searches above, **none of the four reach mechanisms
+checked so far (direct call, vector table, raw pointer, TBB/TBH jump
+table) explain how this function is invoked.**
+
+Remaining hypotheses, none yet investigated:
+- reached via a runtime-computed address (base register + arithmetic
+  offset) rather than any static table — would need dataflow tracing
+  from a `blx`/`bx` on a register, not a literal-pattern search;
+- `FUN_0800019c` is not actually a real function entry point — Ghidra
+  may have carved a function boundary at a point that is only reached
+  as a fallthrough continuation of the preceding function, and the
+  real (referenced) entry point is elsewhere; worth checking what
+  precedes `0x0800019c` in the binary and whether it's actually
+  reachable code at all;
+- dead/unreferenced code (e.g. from a statically-linked library
+  routine never actually called by this build).
 
 Important: do NOT identify its timer solely from function address/order.
 
@@ -98,16 +141,34 @@ Important: do NOT identify its timer solely from function address/order.
 
 `FUN_0800604c(...)` — high confidence: IRQ priority configuration.
 
-Known enabled IRQ numbers:
+### 4.1 Vector table — CONFIRMED (direct read of nRLC_2_0_12_FREEWARE.hex vector table, cross-checked against the official STM32F303.svd interrupt map)
 
-| IRQ | Hex | Current status |
-|---:|---:|---|
-| 11 | `0x0B` | enabled; `FUN_0800019c` is associated candidate, exact vector mapping pending |
-| 20 | `0x14` | associated with USB peripheral `0x40005C00`; ISR unresolved |
-| 37 | `0x25` | enabled; peripheral/ISR unresolved |
-| 40 | `0x28` | enabled; peripheral/ISR unresolved |
-| 54 | `0x36` | enabled for a specific peripheral object; ISR unresolved |
-| 55 | `0x37` | enabled; peripheral/ISR unresolved |
+| IRQ | STM32F303 designation | Handler address | Status |
+|---:|---|---|---|
+| 11 | DMA1_CH1 | `0x08000644` | implemented |
+| 13 | DMA1_CH3 | `0x08004010` | implemented |
+| 14 | DMA1_CH4 | `0x0800401C` | implemented |
+| 15 | DMA1_CH5 | `0x08004028` | implemented |
+| 20 | USB_LP_CAN_RX0 | `0x080126E4` | implemented |
+| 37 | USART1_EXTI25 | `0x08010B5C` | implemented |
+| 40 | EXTI15_10 | `0x10000B28` | implemented; body relocated to CCM RAM (0x1000xxxx) |
+| 54 | TIM6_DACUNDER | `0x0800237C` | implemented |
+| 55 | TIM7 | `0x0800FF78` | implemented |
+| 56 | DMA2_CH1 | `0x08004034` | implemented |
+| 57 | DMA2_CH2 | `0x080023D2` | implemented |
+| 58 | DMA2_CH3 | `0x08004040` | implemented |
+| 59 | DMA2_CH4 | `0x080023D2` | **not implemented** — same address as default/unhandled-IRQ handler |
+| 60 | DMA2_CH5 | `0x080023D2` | **not implemented** — same address as default/unhandled-IRQ handler |
+| 61 | ADC4 | `0x080023D2` | **not implemented** — same address as default/unhandled-IRQ handler |
+
+Correction note: an earlier pass had IRQ54-59 mapped as
+DMA2_Channel1..DMA2_Channel4/ADC4 directly following IRQ40, which
+incorrectly skipped the TIM6_DACUNDER (54) and TIM7 (55) vector slots
+present in the real STM32F303 vector table. The table above replaces
+that mapping; it is a direct read of the vector table cross-checked
+against the SVD interrupt list, not a reconstruction from memory.
+
+### 4.2 Still open
 
 `FUN_08007770()` configures SysTick. SysTick handler remains unresolved.
 
@@ -225,13 +286,13 @@ Protocol/parser structure: incomplete.
 
 ## 13. Next concrete actions
 
-1. Recover the actual vector table/startup representation.
-2. Map each vector entry to an address.
-3. Match handler addresses against the 409 Ghidra functions.
-4. Resolve IRQ 11 and prove/disprove `FUN_0800019c` mapping.
+1. Recover the actual vector table/startup representation. — DONE 2026-09-04
+2. Map each vector entry to an address. — DONE for IRQ 11/13/14/15/20/37/40/54-61 (see 4.1)
+3. Match handler addresses against the Ghidra functions. — partially done
+4. Resolve IRQ 11 and prove/disprove `FUN_0800019c` mapping. — DISPROVED as a vector-table match; TBB/TBH hypothesis also checked and DISPROVED (all 14 tables decoded, no match). New task: trace via computed-address dataflow, or verify `0x0800019c` is a real function entry point at all (see section 3)
 5. Resolve IRQ 20 / USB ISR.
-6. Resolve IRQ 54 and its peripheral.
-7. Resolve IRQ 37, 40, 55.
+6. ~~Resolve IRQ 54 and its peripheral.~~ RESOLVED 2026-09-04: IRQ54 = TIM6_DACUNDER (see 4.1)
+7. ~~Resolve IRQ 37, 40, 55.~~ RESOLVED 2026-09-04 (IRQ37=USART1, IRQ40=EXTI15_10, IRQ55=TIM7 — see 4.1)
 8. Resolve SysTick handler.
 9. Extract timer clock/PSC/ARR values and derive periods.
 10. Update this document with evidence, not assumptions.
