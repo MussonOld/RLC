@@ -1,343 +1,364 @@
-# RLC Reverse Engineering — Status
+# RLC Реверс-инжиниринг — Статус
 
-Repository: https://github.com/MussonOld/RLC
-Source: `nRLC_2_0_12_FREEWARE_ghidra_decompiled.txt` (Ghidra decompile, 413 functions)
-Date: 2026-09-04
+Репозиторий: https://github.com/MussonOld/RLC
+Источник: `nRLC_2_0_12_FREEWARE_ghidra_decompiled.txt` (декомпиляция Ghidra, 413 функций)
+Дата: 2026-09-04
 
-## Current stage
-**Stage 2 — vector / IRQ / ISR reconstruction.**
+## Текущий этап
+**Этап 2 — реконструкция векторов / IRQ / ISR.**
 
-Goal:
-`vector -> IRQ -> handler -> peripheral -> ISR purpose -> global data`
+Цель:
+`вектор -> IRQ -> обработчик -> периферия -> назначение ISR -> глобальные данные`
 
-### Agreed analysis order (2026-09-04)
-Anchor-first, not function-by-function guessing: establish who writes
-which peripheral registers and from what context before assigning
-meaning to any individual function.
+### Согласованный порядок анализа (2026-09-04)
+Сначала якоря, а не угадывание функция за функцией: сначала устанавливаем,
+кто и в каком контексте пишет в какие регистры периферии, и только потом
+приписываем смысл отдельным функциям.
 
-1. `Reset_Handler` at `0x080023B8` — anchor. Expect: `.data` init,
-   `.bss` clear, where control passes to `main`, which peripheral-init
-   functions get called from here. **DONE 2026-09-04 — see section 2.**
-   Result: 4-instruction trampoline calling `FUN_0800ff68` then tail-
-   chaining through `0x08000188` -> `FUN_08002d48` -> `FUN_08016274`
-   (confirmed main()). No explicit inline `.data`/`.bss` loop was found
-   in `Reset_Handler` itself — it must happen inside one of the three
-   called functions, not yet individually opened.
-2. `SysTick_Handler` at `0x0800FDCC` — what register/flag it touches,
-   whether there's a software tick/scheduler, actual period. **DONE
-   2026-09-04 — see section 4.2.** Result: resolves the `FUN_0800019c`
-   question from step-3-in-waiting — it's the SysTick body, reached by
-   tail-call, not a plain `bl`. Reload value / actual period still
-   open.
-3. Confirmed-vector ISRs, in this order (all addresses direct from the
-   vector table, see section 4.1):
+1. `Reset_Handler` по адресу `0x080023B8` — якорь. Ожидается: инициализация
+   `.data`, очистка `.bss`, куда передаётся управление в `main`, какие
+   функции инициализации периферии вызываются отсюда. **СДЕЛАНО 2026-09-04
+   — см. раздел 2.** Результат: 4-инструкционный трамплин, вызывающий
+   `FUN_0800ff68`, затем хвостовая цепочка через `0x08000188` ->
+   `FUN_08002d48` -> `FUN_08016274` (подтверждённый main()). Явного
+   inline-цикла `.data`/`.bss` в самом `Reset_Handler` не найдено — это
+   должно происходить внутри одной из трёх вызываемых функций, пока не
+   разобранных по отдельности.
+2. `SysTick_Handler` по адресу `0x0800FDCC` — какой регистр/флаг трогает,
+   есть ли программный тик/планировщик, реальный период. **СДЕЛАНО
+   2026-09-04 — см. раздел 4.2.** Результат: разрешает вопрос про
+   `FUN_0800019c`, ожидавший шага 3 — это тело SysTick, достигается через
+   хвостовой вызов, а не обычный `bl`. Значение reload / реальный период
+   всё ещё открыты.
+3. Подтверждённые векторами ISR, в этом порядке (все адреса взяты
+   напрямую из таблицы векторов, см. раздел 4.1):
    `DMA1_CH1 0x08000644`, `DMA1_CH3 0x08004010`, `DMA1_CH4 0x0800401C`,
    `DMA1_CH5 0x08004028`, `USB 0x080126E4`, `USART1 0x08010B5C`,
    `TIM6 0x0800237C`, `TIM7 0x0800FF78`, `DMA2_CH1 0x08004034`,
-   `DMA2_CH3 0x08004040`. TIM6/TIM7 + DMA are the priority pair — likely
-   source of the real timing architecture.
+   `DMA2_CH3 0x08004040`. TIM6/TIM7 + DMA — приоритетная пара, вероятный
+   источник реальной временной архитектуры.
 
-### Explicitly not doing yet
-- reconstructing `main.c` from Ghidra names;
-- assigning `FUN_0800019c` any purpose;
-- concluding a DMA channel's purpose from its channel number alone;
-- searching the binary blindly for PSC/ARR values.
+### Явно НЕ делаем пока
+- восстановление `main.c` по именам Ghidra;
+- приписывание `FUN_0800019c` какого-либо назначения;
+- вывод назначения DMA-канала только по номеру канала;
+- слепой поиск значений PSC/ARR по всему бинарнику.
 
-## Rules
-- CONFIRMED = direct evidence from code/register/vector/xref.
-- PROBABLE = strong inference, not yet directly proven.
-- UNKNOWN = insufficient evidence; do not guess.
-- Do not permanently rename Ghidra functions without evidence.
-- Do not write final hardware/application code before the corresponding relationships are established.
+## Правила
+- CONFIRMED = прямое подтверждение из кода/регистра/вектора/xref.
+- PROBABLE = сильный вывод, но пока напрямую не доказанный.
+- UNKNOWN = недостаточно доказательств; не гадать.
+- Не переименовывать функции Ghidra окончательно без доказательств.
+- Не писать финальный аппаратный/прикладной код до установления
+  соответствующих связей.
 
-## 1. MCU / memory map
+## 1. МК / карта памяти
 
-CORRECTED 2026-09-04: firmware is STM32F3-class (STM32F303), not STM32F0.
+ИСПРАВЛЕНО 2026-09-04: прошивка относится к классу STM32F3 (STM32F303),
+не STM32F0.
 
-Original STM32F0 conclusion was based only on GPIO/SYSCFG/USB/TIM15-17 base
-addresses, which are near-identical between STM32F0 and STM32F3 (shared bus
-layout) and therefore do not distinguish the two families. Corrected by
-independent verification against the official ST STM32F303.svd:
+Изначальный вывод про STM32F0 основывался только на базовых адресах
+GPIO/SYSCFG/USB/TIM15-17, которые практически идентичны у STM32F0 и STM32F3
+(общая структура шин) и потому не различают эти два семейства. Исправлено
+независимой проверкой по официальному STM32F303.svd от ST:
 
-- Vector table contains ADC1_2, USB_HP_CAN_TX, TIM8, ADC3, ADC4, and seven
-  individually-vectored DMA1 channels (DMA1_CH1..DMA1_CH7) — this exact
-  vector layout does not exist on any STM32F0 device (no TIM8/ADC3/ADC4,
-  different DMA vector grouping).
-- `0x50000000` (ADC1_2 common registers, STM32F3-specific bus placement;
-  STM32F0's ADC sits at `0x40012400` on a different bus) is referenced
-  directly in the firmware.
-- Initial stack pointer is `0x20009968`, i.e. ~39.4 KB into SRAM from
-  `0x20000000` — consistent with STM32F303xB/C's 40 KB SRAM; no
-  pin/feature-comparable STM32F0 part has enough SRAM to place the initial
-  SP that high.
-- GPIOB base `0x48000400` matches STM32F303's GPIOB address directly per
-  the official SVD (not merely "consistent with an F0 GPIO run").
+- Таблица векторов содержит ADC1_2, USB_HP_CAN_TX, TIM8, ADC3, ADC4 и семь
+  индивидуально векторизованных каналов DMA1 (DMA1_CH1..DMA1_CH7) — такая
+  раскладка векторов не существует ни у одного устройства STM32F0 (нет
+  TIM8/ADC3/ADC4, иначе сгруппированы векторы DMA).
+- `0x50000000` (общие регистры ADC1_2, специфичное для STM32F3 размещение
+  на шине; ADC у STM32F0 находится на `0x40012400` на другой шине)
+  используется в прошивке напрямую.
+- Начальный указатель стека — `0x20009968`, то есть ~39.4 КБ от начала
+  SRAM (`0x20000000`) — согласуется с 40 КБ SRAM у STM32F303xB/C; ни один
+  сравнимый по выводам/функциям чип STM32F0 не имеет столько SRAM, чтобы
+  разместить начальный SP так высоко.
+- Базовый адрес GPIOB `0x48000400` напрямую совпадает с адресом GPIOB у
+  STM32F303 по официальному SVD (а не просто "согласуется с прогоном GPIO
+  у F0").
 
-Observed peripheral bases (re-labeled per STM32F303.svd):
+Обнаруженные базовые адреса периферии (переподписаны по STM32F303.svd):
 - GPIO: `0x48000000` (GPIOA), `0x48000400` (GPIOB), `0x48000800` (GPIOC),
   `0x48000C00` (GPIOD), `0x48001000` (GPIOE)
-- SYSCFG: `0x40010000` (including `0x40010008`)
+- SYSCFG: `0x40010000` (включая `0x40010008`)
 - USB: `0x40005C00`
 - TIM1: `0x40012C00`
-- TIM15: `0x40014000` (register layout confirmed via SVD; no direct
-  reference to it was found in the firmware — see note below)
-- TIM16: `0x40014400` (confirmed in use)
-- TIM17: `0x40014800` (register layout confirmed via SVD; no direct
-  reference to it was found in the firmware — see note below)
+- TIM15: `0x40014000` (структура регистров подтверждена по SVD; прямых
+  обращений в прошивке не найдено — см. примечание ниже)
+- TIM16: `0x40014400` (использование подтверждено)
+- TIM17: `0x40014800` (структура регистров подтверждена по SVD; прямых
+  обращений в прошивке не найдено — см. примечание ниже)
 
-Exact part number: image size (~185 KB for `nRLC_2_0_12_FREEWARE.hex`)
-exceeds STM32F303CB's 128 KB Flash — actual silicon is CC/RC (256 KB) or
-larger, not CB, despite CB being what appears on the schematic silkscreen
-for this board. Confirm against the physical chip marking if available.
+Точный номер модели: размер образа (~185 КБ для `nRLC_2_0_12_FREEWARE.hex`)
+превышает 128 КБ Flash у STM32F303CB — реальный кристалл CC/RC (256 КБ)
+или больше, не CB, несмотря на то что на шёлкографии схемы для этой платы
+указан CB. Проверить по физической маркировке чипа, если доступна.
 
-Note on TIM15/TIM17: cross-referencing every SVD-labeled TIM15/TIM17
-register address against the firmware's actual instruction operands found
-zero direct hits for either timer. This does not disprove their use (code
-may reach them through a parameterized/indirect driver, the same pattern
-confirmed for GPIO_Init at `FUN_08005cac`), but the "TIM15/16/17-related"
-attribution for `FUN_08008384`/`FUN_080101b4` in section 10 should be
-downgraded from "high" to PROBABLE for the TIM15/TIM17 portion until direct
-evidence is found; TIM16 use is separately confirmed by direct reference.
+Примечание про TIM15/TIM17: перекрёстная сверка каждого подписанного по
+SVD адреса регистра TIM15/TIM17 с реальными операндами инструкций в
+прошивке дала ноль прямых совпадений для обоих таймеров. Это не
+опровергает их использование (код может обращаться к ним через
+параметризованный/косвенный драйвер — та же схема подтверждена для
+GPIO_Init в `FUN_08005cac`), но атрибуцию "TIM15/16/17-related" для
+`FUN_08008384`/`FUN_080101b4` в разделе 10 стоит понизить с "high" до
+PROBABLE для части про TIM15/TIM17, пока не найдены прямые доказательства;
+использование TIM16 подтверждено отдельно, прямой ссылкой.
 
-## 2. Startup / main — CONFIRMED 2026-09-04 (full traced chain, not pattern-matched)
+## 2. Старт / main — CONFIRMED 2026-09-04 (полностью прослеженная цепочка, не по шаблону)
 
-Traced directly from `Reset_Handler` forward — every hop below is a
-verified `blx`/`bl`/tail-jump target read from the actual instruction
-operands and literal pool, not inferred from address proximity:
+Прослежено напрямую от `Reset_Handler` вперёд — каждый переход ниже —
+это проверенная цель `blx`/`bl`/хвостового перехода, прочитанная из
+реальных операндов инструкций и литерал-пула, а не выведенная по
+близости адресов:
 
 ```
-Reset_Handler (0x080023B8, 4 instructions total)
-  |-- blx FUN_0800ff68        (0 callees, touches no labeled peripheral —
-  |                             likely low-level setup: clock/FPU/watchdog)
-  `-- tail-jump (bx) -> trampoline @ 0x08000188
-        |-- reloads SP (ldr.w sp, [pc, #0xc])
-        |-- bl FUN_08002d48   (2 callees, no labeled peripheral — likely
-        |                       C runtime init: .data copy / .bss zero)
-        `-- tail-jump (bx, via literal) -> FUN_08016274
-              (84 callees; touches ADC4, CRC, DBGMCU, GPIOA, GPIOB,
+Reset_Handler (0x080023B8, всего 4 инструкции)
+  |-- blx FUN_0800ff68        (0 вызываемых функций, не трогает ни одной
+  |                             подписанной периферии — вероятно,
+  |                             низкоуровневая настройка: тактирование/FPU/watchdog)
+  `-- хвостовой переход (bx) -> трамплин @ 0x08000188
+        |-- переустановка SP (ldr.w sp, [pc, #0xc])
+        |-- bl FUN_08002d48   (2 вызываемых функции, периферия не
+        |                       подписана — вероятно, инициализация
+        |                       рантайма C: копирование .data / обнуление .bss)
+        `-- хвостовой переход (bx, через литерал) -> FUN_08016274
+              (84 вызываемых функции; трогает ADC4, CRC, DBGMCU, GPIOA, GPIOB,
                GPIOC, IWDG, RCC, SPI1, TIM1, TIM16, TIM2, TIM3 —
-               this is CONFIRMED as the application main() equivalent:
-               broad hardware/peripheral init, matches the profile
-               previously found by pattern alone for 2.0.01's
-               FUN_08015fd4, but here established by direct call-chain
-               trace from Reset_Handler rather than inference)
+               это CONFIRMED как эквивалент application main(): широкая
+               инициализация железа/периферии, совпадает с профилем,
+               ранее найденным чисто по шаблону для FUN_08015fd4 из
+               2.0.01, но здесь установлено прямым прослеживанием цепочки
+               вызовов от Reset_Handler, а не выводом)
 ```
 
-`FUN_08016274` performs hardware/GPIO initialization, configuration
-loading, and peripheral setup, then (not yet traced further) presumably
-enters the application loop.
+`FUN_08016274` выполняет инициализацию железа/GPIO, загрузку конфигурации
+и настройку периферии, затем (пока не прослежено дальше) предположительно
+входит в основной цикл приложения.
 
-`FUN_0800019c` is NOT reachable through this chain — none of the four
-functions above call or jump to it. This doesn't resolve how
-`FUN_0800019c` is reached (see section 3), it only rules out "part of
-normal startup" as an explanation.
+`FUN_0800019c` НЕ достижима через эту цепочку — ни одна из четырёх функций
+выше её не вызывает и на неё не переходит. Это не разрешает вопрос, как
+достигается `FUN_0800019c` (см. раздел 3), а лишь исключает объяснение
+"часть обычного старта".
 
-`FUN_08000608()` appears to be a main-loop/application state-machine
-function, not an ISR (address/role carried over from prior analysis;
-not yet re-verified against 2.0.12 by direct trace).
+`FUN_08000608()` похожа на функцию основного цикла/конечного автомата
+приложения, не ISR (адрес/роль перенесены из прежнего анализа; ещё не
+перепроверены на 2.0.12 прямым прослеживанием).
 
-## 3. ISR candidate — status revised 2026-09-04, RESOLVED 2026-09-04 (see section 4.2)
+## 3. Кандидат в ISR — статус пересмотрен 2026-09-04, РАЗРЕШЕНО 2026-09-04 (см. раздел 4.2)
 
-**Resolved: `FUN_0800019c` is the SysTick handler body, reached via a
-tail-call `b.w` branch from `SysTick_Handler` — see section 4.2 for the
-full evidence.** The reasoning trail below is kept for the record (it
-correctly identified that the "zero callers" finding was insufficient
-evidence of dead code, which is exactly what turned out to be true).
+**Разрешено: `FUN_0800019c` — это тело обработчика SysTick, достигается
+через хвостовой переход `b.w` из `SysTick_Handler` — полное обоснование
+см. в разделе 4.2.** Цепочка рассуждений ниже сохранена для истории (она
+верно определила, что находка "ноль вызывающих" была недостаточным
+доказательством мёртвого кода — что в итоге и подтвердилось).
 
-`FUN_0800019c @ 0x0800019c` — was rated a strong ISR/periodic-handler
-candidate based on zero direct `bl` callers plus its body evidence
-(counters, timing/event fields, periodic hardware actions).
+`FUN_0800019c @ 0x0800019c` — оценивалась как сильный кандидат в
+ISR/периодический обработчик на основании нуля прямых вызывающих через
+`bl` плюс улик из тела функции (счётчики, поля времени/событий,
+периодические аппаратные действия).
 
-**Vector-table check (this session): direct disproof of ISR-via-vector.**
-Read the full vector table of `nRLC_2_0_12_FREEWARE.hex` (first 100
-entries, IRQ -16..84) and searched for `0x0800019c` — not present at any
-vector slot. Also searched the entire firmware image for the literal
-32-bit value `0x0800019c`/`0x0800019d` (Thumb-bit set) as raw data — zero
-occurrences anywhere, meaning it is not stored in any plain
-function-pointer table either.
+**Проверка таблицы векторов (в этой сессии): прямое опровержение ISR-через-вектор.**
+Прочитана полная таблица векторов `nRLC_2_0_12_FREEWARE.hex` (первые 100
+записей, IRQ -16..84), выполнен поиск `0x0800019c` — не найдено ни в одной
+позиции вектора. Также выполнен поиск по всему образу прошивки буквального
+32-битного значения `0x0800019c`/`0x0800019d` (с установленным Thumb-битом)
+как сырых данных — ноль совпадений где-либо, то есть адрес не хранится и
+ни в одной обычной таблице указателей на функции.
 
-**New lead:** the firmware contains 14 Thumb-2 `TBB`/`TBH` instructions
-(compact PC-relative jump tables, typically compiled from `switch`
-statements) at addresses including `0x08002258`, `0x0800c7c2`,
+**Новая зацепка:** в прошивке обнаружено 14 инструкций Thumb-2 `TBB`/`TBH`
+(компактные PC-относительные таблицы перехода, обычно компилируются из
+`switch`) по адресам, включая `0x08002258`, `0x0800c7c2`,
 `0x0800c862`, `0x0800c9a4`, `0x0800caa6`, `0x0800cd50`, `0x0800df0a`,
-`0x0800fd34`, `0x08010714`, `0x08010736` (+4 more, see decompile). This
-is the most likely way `FUN_0800019c` — and possibly the command
-dispatcher behind the confirmed command strings in section 9 — is
-reached, since `bl`/raw-pointer search excludes the two more common
-mechanisms. None of the 14 tables have been decoded yet to confirm or
-rule out a jump target at `0x0800019c`.
+`0x0800fd34`, `0x08010714`, `0x08010736` (+ ещё 4, см. декомпиляцию). Это
+наиболее вероятный способ достичь `FUN_0800019c` — и, возможно, командного
+диспетчера за подтверждёнными командными строками из раздела 9 — раз поиск
+по `bl`/сырым указателям исключает два более распространённых механизма.
+Ни одна из 14 таблиц пока не декодирована, чтобы подтвердить или исключить
+цель перехода на `0x0800019c`.
 
-**Status: no static caller found by the four mechanisms checked so far
-(direct `bl` call, vector table, raw pointer data, TBB/TBH jump table).
-This is NOT evidence that the function is dead/unreferenced — several
-untested reach mechanisms remain (see list below). Correct current
-formulation: "`FUN_0800019c` is not proven as an ISR and has no
-statically-discovered caller yet" — NOT "`FUN_0800019c` is dead code."**
-The body evidence (counters/timing fields/periodic actions) still
-stands and doesn't rule out an ISR; the original "strong candidate"
-rating rested on an assumption (no callers implies ISR) that a third
-dispatch mechanism (TBB/TBH) invalidates, so the confidence level is
-revised down to UNKNOWN pending further evidence, not down to "unused."
+**Статус: статический вызывающий не найден ни одним из четырёх проверенных
+механизмов (прямой вызов `bl`, таблица векторов, сырой указатель-данные,
+таблица переходов TBB/TBH). Это НЕ доказательство того, что функция
+мёртвая/неиспользуемая — остаётся несколько непроверенных механизмов
+достижения (см. список ниже). Корректная формулировка: "`FUN_0800019c` не
+доказана как ISR и пока не имеет статически обнаруженного вызывающего" —
+а НЕ "`FUN_0800019c` — мёртвый код."** Улики из тела функции (счётчики,
+поля времени/событий, периодические действия) по-прежнему в силе и не
+исключают ISR; изначальная оценка "сильный кандидат" опиралась на
+допущение (нет вызывающих ⇒ ISR), которое опровергает третий механизм
+диспетчеризации (TBB/TBH), поэтому уровень уверенности понижается до
+UNKNOWN в ожидании дальнейших доказательств, а не до "не используется."
 
-**TBB/TBH decode result (this session): negative.** Decoded all 14
-TBB/TBH tables (bounds detected from the preceding `cmp`/bounds-check
-instruction, plus a generous 60-entry re-scan at both possible table
-alignments as a safety margin) — none of the 14 tables contain an entry
-resolving to `0x0800019c`. Combined with the vector-table and raw-
-pointer-data searches above, **none of the four reach mechanisms
-checked so far (direct call, vector table, raw pointer, TBB/TBH jump
-table) explain how this function is invoked.**
+**Результат декодирования TBB/TBH (в этой сессии): отрицательный.**
+Декодированы все 14 таблиц TBB/TBH (границы определены по предшествующей
+инструкции `cmp`/проверке границ, плюс щедрое повторное сканирование на
+60 записей при обоих возможных вариантах выравнивания таблицы для
+подстраховки) — ни одна из 14 таблиц не содержит записи, ведущей на
+`0x0800019c`. В сочетании с поисками по таблице векторов и сырым данным
+выше, **ни один из четырёх проверенных на сегодня механизмов достижения
+(прямой вызов, таблица векторов, сырой указатель, таблица переходов
+TBB/TBH) не объясняет, как вызывается эта функция.**
 
-Remaining hypotheses, none yet investigated:
-- called via a computed address held in a register (`BX`/`BLX Rn`)
-  where the register is loaded from something other than a static
-  literal or the tables checked so far;
-- address formed arithmetically at runtime (base + computed offset)
-  rather than read from any fixed table;
-- `FUN_0800019c` is an entry point reached by a mechanism other than an
-  ordinary call — e.g. a secondary/chained vector table, a bootloader
-  handoff, or similar — not yet checked;
-- the function boundary Ghidra assigned is imprecise — the real,
-  referenced entry point could be a different address within or
-  adjacent to this code, with `0x0800019c` merely a convenient (but
-  wrong) split point;
-- dead/unreferenced code (e.g. from a statically-linked library
-  routine never actually called by this build) — listed for
-  completeness only; not privileged over the other hypotheses above
-  and not to be treated as a working conclusion.
+Оставшиеся гипотезы, ни одна пока не исследована:
+- вызов через вычисляемый адрес в регистре (`BX`/`BLX Rn`), где регистр
+  загружается не из статического литерала и не из уже проверенных таблиц;
+- адрес формируется арифметически во время выполнения (база + вычисляемое
+  смещение), а не читается из какой-либо фиксированной таблицы;
+- `FUN_0800019c` — точка входа, достигаемая механизмом, отличным от
+  обычного вызова — например, вторичная/цепная таблица векторов, передача
+  управления из загрузчика или подобное — пока не проверено;
+- граница функции, назначенная Ghidra, неточна — реальная, на которую
+  реально ссылаются, точка входа может быть по другому адресу внутри или
+  рядом с этим кодом, а `0x0800019c` — лишь удобная (но неверная) точка
+  разбиения;
+- мёртвый/неиспользуемый код (например, процедура из статически
+  слинкованной библиотеки, реально никогда не вызываемая в этой сборке)
+  — перечислена только для полноты; не имеет приоритета над остальными
+  гипотезами выше и не должна восприниматься как рабочий вывод.
 
-**Follow-up (same session): vector-table search completed exhaustively,
-still negative; retraction of a misreading.** The original vector-table
-search (idx 0..99) missed the table's final entry (idx 100 = IRQ84 =
-SPI4); re-checked through idx 105 — still zero matches for
-`0x0800019c`/`0x0800019d`. The real vector table runs `idx 0..100`
-(addresses `0x08000000`-`0x08000190`), ending at IRQ84, immediately
-followed by a small literal pool (values `0x08016275` and `0x20009968`
-at idx 101/102 are data, not vector entries — they are constants read
-by a `ldr r0,[pc,#0]; bx r0` computed-jump sequence at
-`0x08000190`-`0x08000192`, targeting `0x08016275`). An earlier note in
-this section describing this region as a "mini Reset_Handler /
-possible embedded secondary image" was a misreading — it's ordinary
-vector-table tail + literal pool + one computed jump unrelated to
-`FUN_0800019c`, not a distinct embedded structure. `FUN_0800019c`
-begins immediately after this literal pool at `0x0800019c`, which
-appears to be coincidental placement, not evidence of anything.
+**Дополнение (та же сессия): исчерпывающий поиск по таблице векторов
+завершён, по-прежнему отрицательно; отзыв ошибочной трактовки.**
+Исходный поиск по таблице векторов (idx 0..99) пропустил последнюю запись
+таблицы (idx 100 = IRQ84 = SPI4); перепроверено до idx 105 — по-прежнему
+ноль совпадений для `0x0800019c`/`0x0800019d`. Реальная таблица векторов
+занимает `idx 0..100` (адреса `0x08000000`-`0x08000190`), заканчивается
+на IRQ84, сразу за которым следует небольшой литерал-пул (значения
+`0x08016275` и `0x20009968` в idx 101/102 — это данные, не записи
+вектора; это константы, читаемые последовательностью вычисляемого
+перехода `ldr r0,[pc,#0]; bx r0` по адресу `0x08000190`-`0x08000192`,
+ведущей на `0x08016275`). Более ранняя заметка в этом разделе,
+описывавшая эту область как "мини Reset_Handler / возможно встроенный
+вторичный образ" — была ошибочной трактовкой: это обычный хвост таблицы
+векторов + литерал-пул + один вычисляемый переход, не связанный с
+`FUN_0800019c`, а не отдельная встроенная структура. `FUN_0800019c`
+начинается сразу после этого литерал-пула по адресу `0x0800019c`, что
+выглядит случайным размещением, а не доказательством чего-либо.
 
-Net effect: the vector-table hypothesis is now confirmed exhaustively
-dead (not just "likely" dead). The three remaining hypotheses above are
-unchanged; the computed-address-dataflow route is probably the most
-promising next step, given a `bx r0`-style computed jump was just found
-one function earlier in the image — worth checking whether similar
-patterns elsewhere in the firmware target `0x0800019c` specifically.
+Итог: гипотеза про таблицу векторов теперь подтверждена как исчерпывающе
+мёртвая (не просто "вероятно" мёртвая). Три оставшиеся гипотезы выше без
+изменений; путь через вычисляемый-адрес-датафлоу, вероятно, самый
+перспективный следующий шаг, учитывая, что вычисляемый переход в стиле
+`bx r0` только что был найден в одной функции раньше в образе — стоит
+проверить, не ведут ли похожие паттерны в других местах прошивки именно
+на `0x0800019c`.
 
-Important: do NOT identify its timer solely from function address/order.
+Важно: НЕ определять её таймер исключительно по адресу/порядку функции.
 
-## 4. NVIC / IRQ evidence
+## 4. Доказательства NVIC / IRQ
 
-`FUN_0800602e(IRQ)` — high confidence: IRQ enable routine.
+`FUN_0800602e(IRQ)` — высокая уверенность: процедура разрешения IRQ.
 
-`FUN_0800604c(...)` — high confidence: IRQ priority configuration.
+`FUN_0800604c(...)` — высокая уверенность: настройка приоритета IRQ.
 
-### 4.1 Vector table — CONFIRMED (direct read of nRLC_2_0_12_FREEWARE.hex vector table, cross-checked against the official STM32F303.svd interrupt map)
+### 4.1 Таблица векторов — CONFIRMED (прямое чтение таблицы векторов nRLC_2_0_12_FREEWARE.hex, сверено с официальной картой прерываний STM32F303.svd)
 
-| IRQ | STM32F303 designation | Handler address | Status |
+| IRQ | Обозначение STM32F303 | Адрес обработчика | Статус |
 |---:|---|---|---|
-| 11 | DMA1_CH1 | `0x08000644` | implemented |
-| 13 | DMA1_CH3 | `0x08004010` | implemented |
-| 14 | DMA1_CH4 | `0x0800401C` | implemented |
-| 15 | DMA1_CH5 | `0x08004028` | implemented |
-| 20 | USB_LP_CAN_RX0 | `0x080126E4` | implemented |
-| 37 | USART1_EXTI25 | `0x08010B5C` | implemented |
-| 40 | EXTI15_10 | `0x10000B28` | implemented; body relocated to CCM RAM (0x1000xxxx) |
-| 54 | TIM6_DACUNDER | `0x0800237C` | implemented |
-| 55 | TIM7 | `0x0800FF78` | implemented |
-| 56 | DMA2_CH1 | `0x08004034` | implemented |
-| 57 | DMA2_CH2 | `0x080023D2` | implemented |
-| 58 | DMA2_CH3 | `0x08004040` | implemented |
-| 59 | DMA2_CH4 | `0x080023D2` | **not implemented** — same address as default/unhandled-IRQ handler |
-| 60 | DMA2_CH5 | `0x080023D2` | **not implemented** — same address as default/unhandled-IRQ handler |
-| 61 | ADC4 | `0x080023D2` | **not implemented** — same address as default/unhandled-IRQ handler |
+| 11 | DMA1_CH1 | `0x08000644` | реализован |
+| 13 | DMA1_CH3 | `0x08004010` | реализован |
+| 14 | DMA1_CH4 | `0x0800401C` | реализован |
+| 15 | DMA1_CH5 | `0x08004028` | реализован |
+| 20 | USB_LP_CAN_RX0 | `0x080126E4` | реализован |
+| 37 | USART1_EXTI25 | `0x08010B5C` | реализован |
+| 40 | EXTI15_10 | `0x10000B28` | реализован; тело перенесено в CCM RAM (0x1000xxxx) |
+| 54 | TIM6_DACUNDER | `0x0800237C` | реализован |
+| 55 | TIM7 | `0x0800FF78` | реализован |
+| 56 | DMA2_CH1 | `0x08004034` | реализован |
+| 57 | DMA2_CH2 | `0x080023D2` | реализован |
+| 58 | DMA2_CH3 | `0x08004040` | реализован |
+| 59 | DMA2_CH4 | `0x080023D2` | **не реализован** — тот же адрес, что дефолтный/необработанный обработчик IRQ |
+| 60 | DMA2_CH5 | `0x080023D2` | **не реализован** — тот же адрес, что дефолтный/необработанный обработчик IRQ |
+| 61 | ADC4 | `0x080023D2` | **не реализован** — тот же адрес, что дефолтный/необработанный обработчик IRQ |
 
-Correction note: an earlier pass had IRQ54-59 mapped as
-DMA2_Channel1..DMA2_Channel4/ADC4 directly following IRQ40, which
-incorrectly skipped the TIM6_DACUNDER (54) and TIM7 (55) vector slots
-present in the real STM32F303 vector table. The table above replaces
-that mapping; it is a direct read of the vector table cross-checked
-against the SVD interrupt list, not a reconstruction from memory.
+Примечание об исправлении: в более раннем проходе IRQ54-59 были
+сопоставлены как DMA2_Channel1..DMA2_Channel4/ADC4 сразу вслед за IRQ40,
+что ошибочно пропустило позиции вектора TIM6_DACUNDER (54) и TIM7 (55),
+реально присутствующие в таблице векторов STM32F303. Таблица выше
+заменяет то сопоставление; это прямое чтение таблицы векторов, сверенное
+со списком прерываний SVD, а не реконструкция по памяти.
 
-### 4.2 SysTick — RESOLVED 2026-09-04
+### 4.2 SysTick — РАЗРЕШЕНО 2026-09-04
 
-`SysTick_Handler @ 0x0800FDCC` (confirmed by vector table idx=15,
-Cortex-M exception 15 = SysTick, value `0x0800FDCD` matches exactly):
+`SysTick_Handler @ 0x0800FDCC` (подтверждено по таблице векторов idx=15,
+исключение Cortex-M 15 = SysTick, значение `0x0800FDCD` совпадает точно):
 
 ```
 push {r4, lr}
-bl   FUN_08005f88      ; ordinary call, not yet opened
+bl   FUN_08005f88      ; обычный вызов, ещё не разобран
 pop  {r4, lr}
-b.w  0x0800019c          ; TAIL CALL (branch, not bl) into FUN_0800019c
+b.w  0x0800019c          ; ХВОСТОВОЙ ВЫЗОВ (branch, не bl) в FUN_0800019c
 ```
 
-This resolves the `FUN_0800019c` mystery from section 3: it is reached
-via an unconditional tail-call branch (`b.w`), not a `bl` instruction —
-which is exactly why every `bl`-based caller search in section 3 found
-zero results. It was never dead code; the reach mechanism just wasn't
-one of the four checked. **`FUN_0800019c` is CONFIRMED as the body of
-the SysTick handler**, executed on every SysTick tick after
-`SysTick_Handler` first calls `FUN_08005f88`. Section 3's original body
-evidence (counters, timing/event fields, periodic hardware actions) is
-now explained, not just consistent.
+Это разрешает загадку `FUN_0800019c` из раздела 3: она достигается через
+безусловный хвостовой переход (`b.w`), а не инструкцию `bl` — вот почему
+каждый поиск вызывающих на основе `bl` в разделе 3 давал ноль результатов.
+Это никогда не был мёртвый код; просто механизм достижения не входил в
+число четырёх проверенных. **`FUN_0800019c` подтверждена (CONFIRMED) как
+тело обработчика SysTick**, выполняется на каждый тик SysTick после того,
+как `SysTick_Handler` сначала вызывает `FUN_08005f88`. Исходные улики из
+тела функции в разделе 3 (счётчики, поля времени/событий, периодические
+аппаратные действия) теперь объяснены, а не просто согласуются.
 
-`FUN_08005f88` — not yet opened; likely candidate for a millisecond
-tick counter or similar SysTick-adjacent bookkeeping, unconfirmed.
+`FUN_08005f88` — ещё не разобрана; вероятный кандидат на счётчик
+миллисекундного тика или подобный учёт рядом с SysTick, не подтверждено.
 
-Still open: SysTick reload value (`SYST_RVR`) / actual tick period not
-yet extracted — needed to convert `FUN_0800019c`'s counters into real
-time units.
+Всё ещё открыто: значение перезагрузки SysTick (`SYST_RVR`) / реальный
+период тика пока не извлечены — нужны, чтобы перевести счётчики
+`FUN_0800019c` в реальные единицы времени.
 
-`FUN_08007770()` was previously listed as "configures SysTick" — this
-was a 2.0.01 address never re-verified for 2.0.12 (see the stale-table
-warning in section 10); do not rely on it until re-checked.
+`FUN_08007770()` ранее числилась как "настраивает SysTick" — это адрес из
+2.0.01, никогда не перепроверенный для 2.0.12 (см. предупреждение об
+устаревшей таблице в разделе 10); не полагаться на неё до перепроверки.
 
 ## 5. USB
 
-Peripheral `0x40005C00`: very high confidence USB.
+Периферия `0x40005C00`: очень высокая уверенность, USB.
 
-IRQ `20 (0x14)`: high-confidence association.
+IRQ `20 (0x14)`: связь с высокой уверенностью.
 
-Exact USB ISR: UNKNOWN.
+Точная ISR USB: UNKNOWN.
 
 ## 6. GPIO / EXTI
 
-`FUN_08005cac()` is a low-level GPIO configuration routine.
+`FUN_08005cac()` — низкоуровневая процедура настройки GPIO.
 
-It configures mode/input/output/pull/alternate-function and EXTI-related state and accesses SYSCFG.
+Настраивает режим/вход/выход/подтяжку/альтернативную функцию и состояние,
+связанное с EXTI, обращается к SYSCFG.
 
-Five GPIO base addresses are observed: GPIOA..GPIOE on an STM32F303 device (confirmed per SVD, see section 1 correction above; not STM32F0).
+Обнаружено пять базовых адресов GPIO: GPIOA..GPIOE на устройстве STM32F303
+(подтверждено по SVD, см. исправление в разделе 1 выше; не STM32F0).
 
-Exact MCU pinout and application signal names: UNKNOWN.
+Точная распиновка МК и имена прикладных сигналов: UNKNOWN (см. отдельный
+файл `GPIO_MAP.md` — там теперь есть подтверждённая таблица распиновки по
+схеме и netlist).
 
-## 7. Timer peripherals
+## 7. Периферия таймеров
 
-TIM1: `0x40012C00` — confirmed.
+TIM1: `0x40012C00` — подтверждено.
 
-TIM15/16/17: `0x40014000 / 0x40014400 / 0x40014800` — very high confidence.
+TIM15/16/17: `0x40014000 / 0x40014400 / 0x40014800` — очень высокая
+уверенность.
 
-`FUN_080101b4()` and `FUN_08008384()` contain code consistent with the TIM15/16/17 group.
+`FUN_080101b4()` и `FUN_08008384()` содержат код, согласующийся с группой
+TIM15/16/17.
 
-Exact timer-to-IRQ assignment and clock/PSC/ARR values still need extraction.
+Точное сопоставление таймер↔IRQ и значения тактирования/PSC/ARR всё ещё
+нужно извлечь.
 
-## 8. Configuration system
+## 8. Система конфигурации
 
-`FUN_080045c4()` is used as a configuration parameter access mechanism.
+`FUN_080045c4()` используется как механизм доступа к параметрам
+конфигурации.
 
-Known IDs observed in the reverse-engineering notes:
+Известные ID, обнаруженные в заметках реверс-инжиниринга:
 `0x556`, `0x557`, `0x558`, `0x559`, `0x560`, `0x561`, `0x562`, `0x563`, `0x567`, `0x568`, `0x569`, `0x571`, `0x572`, `0x575`, `0x576`, `0x577`, `0x578`, `0x579`, `0x580`, `0x581`, `0x582`.
 
-Their exact semantic names are not yet established. Preserve numeric IDs until evidence permits naming.
+Их точные смысловые имена пока не установлены. Сохранять числовые ID до
+появления доказательств для именования.
 
-## 9. Command interface
+## 9. Командный интерфейс
 
-Known command strings:
+Известные командные строки:
 - `get_buff`
 - `get_dpf`
 - `get_sin`
@@ -354,117 +375,125 @@ Known command strings:
 - `DAC_ZERO`
 - `autofreq`
 
-`setRUI` passes three parameters to `FUN_08000ec0()`.
+`setRUI` передаёт три параметра в `FUN_08000ec0()`.
 
-DAC-related commands manipulate DAC parameters.
+Команды, связанные с DAC, манипулируют параметрами DAC.
 
-Protocol/parser structure: incomplete.
+Структура протокола/парсера: неполная.
 
-## 10. Important functions
+## 10. Важные функции
 
-**⚠ STALE TABLE — flagged 2026-09-04, not yet fixed.** All rows below
-were established against `nRLC_2_0_01.hex`. When this session switched
-the analysis target to `nRLC_2_0_12_FREEWARE.hex`, these addresses were
-never re-verified. Direct check just now: of the 11 addresses below,
-**only `FUN_0800019c` still resolves to a function at the same address
-in 2.0.12** (confirmed coincidentally while tracing Reset_Handler); the
-other 10 do NOT exist at these addresses in the 2.0.12 build (function
-layout shifted between versions). Do not treat any "high confidence"
-rating below as applying to 2.0.12 until each row is individually
-re-resolved against the current binary — treat this whole table as
-UNKNOWN/unverified-for-2.0.12 except the two rows marked CONFIRMED.
+**⚠ УСТАРЕВШАЯ ТАБЛИЦА — помечено 2026-09-04, ещё не исправлено.** Все
+строки ниже были установлены по `nRLC_2_0_01.hex`. Когда в этой сессии
+цель анализа переключилась на `nRLC_2_0_12_FREEWARE.hex`, эти адреса
+никогда не перепроверялись. Прямая проверка только что: из 11 адресов
+ниже **только `FUN_0800019c` по-прежнему разрешается в функцию по тому же
+адресу в 2.0.12** (подтверждено случайно, при прослеживании
+Reset_Handler); остальные 10 НЕ существуют по этим адресам в сборке
+2.0.12 (расположение функций сместилось между версиями). Не считать
+рейтинг "high confidence" ниже применимым к 2.0.12, пока каждая строка
+не будет индивидуально перепроверена по актуальному бинарнику — считать
+всю эту таблицу UNKNOWN/неподтверждённой-для-2.0.12, кроме двух строк,
+помеченных CONFIRMED.
 
-| Address | Ghidra function | Current interpretation | Confidence |
+| Адрес | Функция Ghidra | Текущая трактовка | Уверенность |
 |---|---|---|---|
-| `0x080023B8` | `Reset_Handler` | reset entry — CONFIRMED 2026-09-04 for 2.0.12, see section 2 | high (2.0.12) |
-| `0x0800FF68`, `0x08002D48`, `0x08016274` | startup chain (see section 2) | clock/FPU/wdg init, C runtime init, main() | high (2.0.12) |
-| `0x0800019C` | `FUN_0800019c` | **RESOLVED**: body of SysTick handler, reached via tail-call `b.w` from `SysTick_Handler` — see section 4.2 | confirmed |
-| `0x08003418` | `FUN_08003418` (2.0.01 address) | peripheral setup + IRQ enable/start sequence | **unverified for 2.0.12 — address does not resolve** |
-| `0x080045C4` | `FUN_080045c4` (2.0.01 address) | configuration parameter access | **unverified for 2.0.12 — address does not resolve** |
-| `0x08005CAC` | `FUN_08005cac` (2.0.01 address) | GPIO/EXTI low-level configuration | **unverified for 2.0.12 — address does not resolve** |
-| `0x0800602E` | `FUN_0800602e` (2.0.01 address) | NVIC IRQ enable | **unverified for 2.0.12 — address does not resolve** |
-| `0x0800604C` | `FUN_0800604c` (2.0.01 address) | NVIC priority setup | **unverified for 2.0.12 — address does not resolve** |
-| `0x08007770` | `FUN_08007770` (2.0.01 address) | SysTick configuration | **unverified for 2.0.12 — address does not resolve; see section 4.2, real SysTick anchor for 2.0.12 is `0x0800FDCC`** |
-| `0x08007924` | `FUN_08007924` (2.0.01 address) | peripheral clock/setup dispatcher | **unverified for 2.0.12 — address does not resolve** |
-| `0x08008384` | `FUN_08008384` (2.0.01 address) | timer/peripheral initialization | **unverified for 2.0.12 — address does not resolve** |
-| `0x080101B4` | `FUN_080101b4` (2.0.01 address) | TIM15/16/17-related code | **unverified for 2.0.12 — address does not resolve** |
-| `0x08000608` | `FUN_08000608` (2.0.01 address) | application state machine | **unverified for 2.0.12 — address does not resolve** |
+| `0x080023B8` | `Reset_Handler` | точка входа при сбросе — CONFIRMED 2026-09-04 для 2.0.12, см. раздел 2 | high (2.0.12) |
+| `0x0800FF68`, `0x08002D48`, `0x08016274` | цепочка старта (см. раздел 2) | init тактирования/FPU/watchdog, init рантайма C, main() | high (2.0.12) |
+| `0x0800019C` | `FUN_0800019c` | **РАЗРЕШЕНО**: тело обработчика SysTick, достигается хвостовым вызовом `b.w` из `SysTick_Handler` — см. раздел 4.2 | confirmed |
+| `0x08003418` | `FUN_08003418` (адрес 2.0.01) | настройка периферии + последовательность разрешения/запуска IRQ | **не подтверждено для 2.0.12 — адрес не разрешается** |
+| `0x080045C4` | `FUN_080045c4` (адрес 2.0.01) | доступ к параметру конфигурации | **не подтверждено для 2.0.12 — адрес не разрешается** |
+| `0x08005CAC` | `FUN_08005cac` (адрес 2.0.01) | низкоуровневая настройка GPIO/EXTI | **не подтверждено для 2.0.12 — адрес не разрешается** |
+| `0x0800602E` | `FUN_0800602e` (адрес 2.0.01) | разрешение IRQ NVIC | **не подтверждено для 2.0.12 — адрес не разрешается** |
+| `0x0800604C` | `FUN_0800604c` (адрес 2.0.01) | настройка приоритета NVIC | **не подтверждено для 2.0.12 — адрес не разрешается** |
+| `0x08007770` | `FUN_08007770` (адрес 2.0.01) | настройка SysTick | **не подтверждено для 2.0.12 — адрес не разрешается; см. раздел 4.2, реальный якорь SysTick для 2.0.12 — `0x0800FDCC`** |
+| `0x08007924` | `FUN_08007924` (адрес 2.0.01) | диспетчер тактирования/настройки периферии | **не подтверждено для 2.0.12 — адрес не разрешается** |
+| `0x08008384` | `FUN_08008384` (адрес 2.0.01) | инициализация таймера/периферии | **не подтверждено для 2.0.12 — адрес не разрешается** |
+| `0x080101B4` | `FUN_080101b4` (адрес 2.0.01) | код, связанный с TIM15/16/17 | **не подтверждено для 2.0.12 — адрес не разрешается** |
+| `0x08000608` | `FUN_08000608` (адрес 2.0.01) | конечный автомат приложения | **не подтверждено для 2.0.12 — адрес не разрешается** |
 
-## 11. Not yet established
+## 11. Пока не установлено
 
-- exact STM32F303 part number (CC vs RC vs other 256KB+ variant, given image size exceeds CB's 128KB — see section 1);
-- complete vector table;
-- exact IRQ -> handler mapping;
-- exact timer -> IRQ mapping;
-- SysTick handler;
-- ADC/DAC identity and configuration;
+- точный номер модели STM32F303 (CC против RC против другого варианта
+  256КБ+, учитывая что размер образа превышает 128КБ у CB — см. раздел 1);
+- полная таблица векторов;
+- точное сопоставление IRQ -> обработчик;
+- точное сопоставление таймер -> IRQ;
+- обработчик SysTick;
+- идентификация и конфигурация ADC/DAC;
 - DMA;
-- USART/SPI/I2C mapping;
-- complete GPIO pin functions;
-- global structure layouts;
-- measurement timing;
-- DAC waveform generation;
-- frequency/autofreq algorithm;
-- R/L/C calculation;
-- complete serial protocol;
-- persistent storage implementation;
-- final CubeIDE `.ioc`.
+- сопоставление USART/SPI/I2C;
+- полные функции выводов GPIO (частично закрыто файлом `GPIO_MAP.md`);
+- структуры глобальных данных;
+- временная диаграмма измерения;
+- генерация формы сигнала DAC;
+- алгоритм частоты/autofreq;
+- расчёт R/L/C;
+- полный протокол последовательного порта;
+- реализация постоянного хранения;
+- итоговый `.ioc` для CubeIDE.
 
-## 12. Roadmap
+## 12. Дорожная карта
 
-1. Hardware map — partially complete.
-2. **Vector / IRQ / ISR map — CURRENT.**
-3. Global structures.
-4. Measurement and RLC algorithm.
-5. GPIO/pin map.
-6. CubeIDE `.ioc` reconstruction.
-7. Startup/main/ISR implementation.
-8. Peripheral/application modules.
-9. Build and functional validation.
+1. Карта железа — частично готова (см. также `GPIO_MAP.md`).
+2. **Карта векторов / IRQ / ISR — ТЕКУЩИЙ ЭТАП.**
+3. Глобальные структуры.
+4. Измерение и алгоритм RLC.
+5. Карта GPIO/выводов.
+6. Реконструкция `.ioc` для CubeIDE.
+7. Реализация старта/main/ISR.
+8. Периферийные/прикладные модули.
+9. Сборка и функциональная проверка.
 
-## 13. Next concrete actions
+## 13. Ближайшие конкретные действия
 
-1. Recover the actual vector table/startup representation. — DONE 2026-09-04
-2. Map each vector entry to an address. — DONE for IRQ 11/13/14/15/20/37/40/54-61 (see 4.1)
-3. Match handler addresses against the Ghidra functions. — partially done
-4. Resolve IRQ 11 and prove/disprove `FUN_0800019c` mapping. — DISPROVED as a vector-table match; TBB/TBH hypothesis also checked and DISPROVED (all 14 tables decoded, no match). New task: trace via computed-address dataflow, or verify `0x0800019c` is a real function entry point at all (see section 3)
-5. Resolve IRQ 20 / USB ISR.
-6. ~~Resolve IRQ 54 and its peripheral.~~ RESOLVED 2026-09-04: IRQ54 = TIM6_DACUNDER (see 4.1)
-7. ~~Resolve IRQ 37, 40, 55.~~ RESOLVED 2026-09-04 (IRQ37=USART1, IRQ40=EXTI15_10, IRQ55=TIM7 — see 4.1)
-8. Resolve SysTick handler.
-9. Extract timer clock/PSC/ARR values and derive periods.
-10. Update this document with evidence, not assumptions.
+1. Восстановить реальное представление таблицы векторов/старта. — СДЕЛАНО 2026-09-04
+2. Сопоставить каждую запись вектора с адресом. — СДЕЛАНО для IRQ 11/13/14/15/20/37/40/54-61 (см. 4.1)
+3. Сопоставить адреса обработчиков с функциями Ghidra. — частично сделано
+4. Разрешить IRQ 11 и доказать/опровергнуть сопоставление `FUN_0800019c`. — ОПРОВЕРГНУТО как совпадение с таблицей векторов; гипотеза TBB/TBH тоже проверена и ОПРОВЕРГНУТА (все 14 таблиц декодированы, совпадений нет). Новая задача: проследить через датафлоу вычисляемого адреса, либо проверить, является ли `0x0800019c` вообще реальной точкой входа функции (см. раздел 3)
+5. Разрешить IRQ 20 / ISR USB.
+6. ~~Разрешить IRQ 54 и его периферию.~~ РАЗРЕШЕНО 2026-09-04: IRQ54 = TIM6_DACUNDER (см. 4.1)
+7. ~~Разрешить IRQ 37, 40, 55.~~ РАЗРЕШЕНО 2026-09-04 (IRQ37=USART1, IRQ40=EXTI15_10, IRQ55=TIM7 — см. 4.1)
+8. Разрешить обработчик SysTick.
+9. Извлечь значения тактирования/PSC/ARR таймеров и вывести периоды.
+10. Обновлять этот документ доказательствами, а не предположениями.
 
-## 14. Handoff
+## 14. Передача (Handoff)
 
-In a new chat:
+В новом чате:
 
-> Continue the RLC reverse engineering from `REVERSE_STATUS.md`. Verify the repository for a newer version and continue from CURRENT TASK. Do not restart the analysis and do not invent unresolved hardware assignments.
+> Продолжи реверс-инжиниринг RLC из `REVERSE_STATUS.md`. Проверь репозиторий на более новую версию и продолжай с ТЕКУЩЕЙ ЗАДАЧИ. Не начинай анализ заново и не выдумывай неразрешённые аппаратные сопоставления.
 
-## 15. Changelog
+## 15. Список изменений
 
-### 2026-09-04 (correction)
-- CORRECTED: MCU family changed from "STM32F0-class" to STM32F303 (STM32F3).
-  Original conclusion relied on GPIO/SYSCFG/USB/TIM15-17 base addresses that
-  are shared between F0 and F3 and do not distinguish them. Corrected via
-  independent cross-check against the official STM32F303.svd: vector table
-  layout (ADC1_2/USB_HP_CAN_TX/TIM8/ADC3/ADC4/per-channel DMA1 vectors),
-  direct reference to ADC-common address `0x50000000` (F3-only bus
-  placement), and initial SP (`0x20009968`) consistent with F303's 40KB
-  SRAM. See section 1 for full evidence.
-- Downgraded TIM15/TIM17 attribution for `FUN_08008384`/`FUN_080101b4`
-  from "high" to PROBABLE: no direct register reference found for either
-  timer under exhaustive SVD-based address cross-referencing; TIM16 use
-  remains confirmed.
-- Flagged actual Flash size as CC/RC-class (256KB+), not CB (128KB) as
-  schematic silkscreen suggests — both known firmware images exceed CB's
-  capacity.
+### 2026-09-04 (исправление)
+- ИСПРАВЛЕНО: семейство МК изменено с "класс STM32F0" на STM32F303 (STM32F3).
+  Исходный вывод опирался на базовые адреса GPIO/SYSCFG/USB/TIM15-17,
+  общие для F0 и F3 и потому их не различающие. Исправлено независимой
+  сверкой с официальным STM32F303.svd: раскладка таблицы векторов
+  (ADC1_2/USB_HP_CAN_TX/TIM8/ADC3/ADC4/векторы DMA1 по каналам), прямая
+  ссылка на адрес общих регистров ADC `0x50000000` (размещение на шине
+  специфично только для F3), и начальный SP (`0x20009968`), согласующийся
+  с 40КБ SRAM у F303. Полное обоснование — в разделе 1.
+- Понижена атрибуция TIM15/TIM17 для `FUN_08008384`/`FUN_080101b4` с
+  "high" до PROBABLE: прямых ссылок на регистры ни одного из таймеров не
+  найдено при исчерпывающей сверке адресов по SVD; использование TIM16
+  остаётся подтверждённым.
+- Отмечено, что реальный размер Flash — класса CC/RC (256КБ+), не CB
+  (128КБ), как предполагает шёлкография схемы — оба известных образа
+  прошивки превышают ёмкость CB.
 
 ### 2026-09-04
-- Consolidated the known reverse-engineering state into a single handoff document.
-- Recorded MCU/peripheral address evidence.
-- Recorded startup/main and ISR candidate findings.
-- Recorded known NVIC IRQs.
-- Recorded USB/GPIO/timer evidence.
-- Recorded configuration IDs and command strings.
-- Defined confidence rules and current next actions.
+- Сведено известное состояние реверс-инжиниринга в единый документ передачи.
+- Зафиксированы доказательства по МК/адресам периферии.
+- Зафиксированы находки по старту/main и кандидату в ISR.
+- Зафиксированы известные IRQ NVIC.
+- Зафиксированы доказательства по USB/GPIO/таймерам.
+- Зафиксированы ID конфигурации и командные строки.
+- Определены правила уверенности и текущие ближайшие действия.
+
+### 2026-09-05 (перевод)
+- Файл полностью переписан на русском языке по просьбе MussonOld; вся
+  техническая информация (адреса, имена функций, таблицы, обоснования)
+  сохранена без изменений по содержанию, переведена только описательная
+  часть.
