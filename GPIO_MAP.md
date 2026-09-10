@@ -215,7 +215,7 @@ Ghidra подписала его напрямую по SVD-метке, порт 
 | PC15 | — | Input | PullDown | — | не установлен |
 | *(опрос PC15+PA1 в цикле при старте — см. ниже)* | | | | | |
 | PC13 | (см. выше, эта же настройка) | Output PP | NoPull | VeryHigh | — |
-| PA9 | → ? (запись без явного 3-го аргумента — уточнить) | Output PP | NoPull | VeryHigh | TX |
+| PA9 | → ? (запись без явного 3-го аргумента — уточнить) | Output PP → **переконфигурируется в AF7** (см. ниже) | NoPull | VeryHigh | TX |
 | PB15 | — | Output PP | NoPull | VeryHigh | Display_CS |
 | PB6 | — | Output PP | NoPull | VeryHigh | (физически NC) |
 | PB7 | — | Output **Open-Drain** | NoPull | VeryHigh | (физически NC, вероятно резерв под I2C) |
@@ -251,9 +251,26 @@ Ghidra подписала его напрямую по SVD-метке, порт 
 
 ### Открытые вопросы
 
-1. **PA9 (сигнал TX) сконфигурирован как обычный GPIO Output, не Alternate
-   Function.** Не проверено, переключается ли он в AF в другом месте кода,
-   либо TX реализован программно.
+1. ~~**PA9 (сигнал TX) сконфигурирован как обычный GPIO Output, не Alternate
+   Function.**~~ **ЗАКРЫТО CONFIRMED 2026-09-10.** Начальная конфигурация
+   Output PP — это ранний boot-time дефолт (до инициализации USART1).
+   Реальный перевод в AF происходит в MSP-колбэке USART1
+   (`FUN_080087f8 @ 0x080087f8`, найден по литералу базового адреса
+   `USART1` = `0x40013800` в `0x08010be0`, затем трассировкой ссылки
+   `DAT_08010be0` до функции): при `*param_1 == &USART1_CR1` вызывается
+   `FUN_08005ccc(&GPIOA_MODER, &local_30)` со структурой
+   `{Pin=0x600, Mode=2, Pull=0, Speed=3, Alternate=7}`. Побитово сверено
+   с официальными заголовками ST (`STM32F3xx_HAL_Driver`, скачаны
+   напрямую с GitHub): `GPIO_InitTypeDef` = `{Pin, Mode, Pull, Speed,
+   Alternate}`, `Pin=0x600` = биты 9+10 (`PA9`+`PA10`), `Mode=2` =
+   `GPIO_MODE_AF_PP`, `Speed=3` = `GPIO_SPEED_FREQ_VERY_HIGH`,
+   `Alternate=7` = `GPIO_AF7_USART1`. Итог: PA9/PA10 = **AF7 (USART1
+   TX/RX), push-pull, NoPull, VeryHigh** — аппаратный UART, не
+   программный TX. Функция также настраивает DMA-хэндлы USART1 (Tx/Rx,
+   `puVar1[1..7]` = приоритет/режим/размер данных) и включает
+   USART1 IRQ (`FUN_0800606c(0x25,2)` / `FUN_0800604e(0x25)`,
+   IRQ 0x25=37=USART1 — совпадает с уже подтверждённым IRQ37 из
+   раздела 4.1 `REVERSE_STATUS.md`).
 2. **PB1 (DIO протокола PGA113) сконфигурирован здесь только как Output**,
    хотя протокол требует двунаправленной передачи — ожидается динамическое
    переключение режима в другом месте кода, не найдено.
