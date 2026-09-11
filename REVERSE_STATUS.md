@@ -3156,26 +3156,41 @@ Alternate Function 7, push-pull, NoPull, VeryHigh, не программный
 **Конкретные известные пробелы в `nRLC.ioc` (обнаружены 2026-09-10,
 сверкой файла с CONFIRMED-разделами выше):**
 
-- `ADC1`/`ADC2` не имеют выставленного внешнего триггера в `.ioc`,
-  хотя раздел 6.29 закрывает его как CONFIRMED `TIM3_CC4`, rising
-  edge. Регистровое значение теперь тоже CONFIRMED по официальному
-  RM0316 (Table 90 "ADC1 (master) & 2 (slave) - External triggers for
-  regular channels", скриншот от MussonOld, 2026-09-10): строка
-  `EXT15` = `TIM3_CC4 event`, `EXTSEL[3:0] = 1111`; примечание `(1)`
-  ("only for F303xD/E") относится только к альтернативе `TIM20_CC3`
-  в этой же ячейке через "or" — сам `TIM3_CC4` доступен на всех
-  устройствах линейки, включая STM32F303CC. Имя HAL-константы для
-  этого в реальном F3-заголовке (не L4) — `ADC1_2_EXTERNALTRIG_T3_CC4`
-  (с префиксом `ADC1_2_`, не `ADC_`; уже CONFIRMED побитово по
-  официальному `stm32f3xx_hal_adc_ex.h` из
-  `github.com/STMicroelectronics/stm32f3xx_hal_driver`, см. раздел
-  6.29). Точный синтаксис ключей `.ioc` для этого параметра и для
-  включения
-  TIM3 CH4 как внутреннего (без физического пина) Output Compare —
-  по-прежнему не зафиксированы в этой сессии, выставить нужно
-  непосредственно в GUI STM32CubeMX (недоступен в песочнице), не
-  редактировать `.ioc` вручную вслепую по одному лишь регистровому
-  значению.
+- ~~`ADC1`/`ADC2` не имеют выставленного внешнего триггера в `.ioc`~~
+  **ЗАКРЫТО 2026-09-11.** Раздел 6.29 закрывает регистровые значения
+  как CONFIRMED `TIM3_CC4`, rising edge, подтверждено официальным
+  RM0316 (Table 90, скриншот от MussonOld): строка `EXT15` =
+  `TIM3_CC4 event`, `EXTSEL[3:0] = 1111`. В самом `.ioc` (после трёх
+  итераций правки и проверки, см. переписку 2026-09-11) теперь
+  реально прописаны все нужные ключи для обоих ADC:
+  `ADC1.ExternalTrigConv=ADC_EXTERNALTRIGCONV_T3_CC4`,
+  `ADC1.ExternalTrigConvEdge=ADC_EXTERNALTRIGCONVEDGE_RISING`,
+  `ADC2.ExternalTrigConv=ADC_EXTERNALTRIGCONV_T3_CC4`,
+  `ADC2.ExternalTrigConvEdge=ADC_EXTERNALTRIGCONVEDGE_RISING` — оба
+  ключа присутствуют и в `IPParameters`, и как отдельные строки для
+  обоих ADC (изначально `ExternalTrigConvEdge` отсутствовал у обоих,
+  затем появился только у ADC1, затем добавлен и у ADC2). `TIM3` CH4
+  включён как внутренний Output Compare без физического пина:
+  `TIM3.Channel-Output Compare4 No Output=TIM_CHANNEL_4`.
+  Имя HAL-константы, использованное реальным CubeMX 6.18.0 —
+  `ADC_EXTERNALTRIGCONV_T3_CC4` (без префикса `ADC1_2_`) — отличается
+  от имени в сыром `stm32f3xx_hal_adc_ex.h`
+  (`ADC1_2_EXTERNALTRIG_T3_CC4`, см. раздел 6.29); скорее всего один
+  из них алиас другого в актуальной версии HAL-пакета CubeMX
+  (STM32Cube FW_F3 V1.11.6, см. `ProjectManager.FirmwarePackage` в
+  `.ioc`) — не критично, реальный сгенерированный код от CubeMX
+  первичен.
+
+  **Отдельный открытый пункт, не блокирует сборку:**
+  `TIM3.Pulse-Output Compare4 No Output=11` (при `Period=23`) —
+  значение CCR4, определяющее фазу срабатывания триггера АЦП внутри
+  периода TIM3. Не найдено соответствующего значения в декомпиляции
+  (поиск по `CCR4`/`0x40000400` не дал прямого попадания на
+  инициализацию этого конкретного регистра) — вероятно, ручной ввод
+  или дефолт CubeMX, не выведенный из прошивки. Для RLC-измерения
+  фаза выборки АЦП относительно сигнала DAC потенциально значима для
+  точности — стоит разобрать отдельно, когда дойдём до вопросов
+  точности измерения, не сейчас.
 - `Dma.DAC_CH1.0.Instance=DMA2_Channel3` в текущем `.ioc` — CONFIRMED
   штатный CubeMX/HAL-путь, сверено с официальным RM0316 (Table 78,
   `TIM6/DAC` → `Channel 3` → `TIM6_UP/DAC_CH1`, скриншот от MussonOld,
