@@ -1,4 +1,4 @@
-; анализатор listing export - 413 functions found
+; Function listing export - 413 functions found
 
 // ==== FUNCTION thunk_FUN_08016274 @ 08000190 ====
 
