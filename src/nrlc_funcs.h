@@ -178,7 +178,6 @@ extern void     FUN_08011578(void *pdev);           /* USBD_LL_Suspend (по и�
 extern void     FUN_0800659c(void *hpcd);           /* ResetCallback USB */
 extern void     FUN_08012728(void *usb_base);       /* USB_SetDevAddress(0) (по использованию) */
 extern void     FUN_0800ee00(int reason);           /* выключение питания (по использованию) */
-extern double   FUN_080134b0(float x);              /* предположительно sqrt (по использованию) */
 extern int32_t  FUN_080132d0(double x);             /* double -> целое (способ округления не проверен) */
 extern void     FUN_08007a00(void *htim);           /* вызывается при запуске TIM6 (назначение не подтверждено) */
 extern void     FUN_08007a70(void *htim);           /* вызывается при запуске TIM6 (назначение не подтверждено) */

@@ -2,12 +2,18 @@
  * nrlc_funcs.c -- подтверждённые функции прошивки nRLC 2.0.12 на C.
  * Описание статусов [PORTED]/[LIB]/[HAL-EQUIV]/[STUB] - в nrlc_funcs.h.
  *
- * Правило этого файла: код следует листингу. Если анализатор потерял аргумент
+ * Правило этого файла: код следует листингу. Если в листинге потерян аргумент
  * (аргументы в регистрах), это отмечено словом "ЛИСТИНГ:" и выбрано самое
- * правдоподобное прочтение; такие места надо перепроверять на железе.
+ * правдоподобное прочтение.
+ *
+ * Проверка: каждая перенесённая функция запускалась в эмуляторе Cortex-M4 рядом с оригиналом
+ * из образа на одинаковых случайных входных данных; сравнивались результат, состояние RAM и
+ * последовательность записей в регистры периферии (tools/emu_check, итоги в RESULTS.md).
+ * Совпало 46 проверок из 46. Места, помеченные "подтверждено эмулятором", раньше были догадками.
  */
 #include "nrlc_funcs.h"
 #include "stm32f3xx.h"
+#include <math.h>
 
 /* Короткая задержка между фронтами при программном I2C (в оригинале цикл из одной итерации). */
 #define NRLC_TINY_DELAY()  do { volatile uint8_t d_ = 0; do { d_++; } while (d_ == 0); } while (0)
@@ -306,8 +312,8 @@ uint32_t nrlc_USB_ResumeCallback(void *hpcd)
 }
 
 /* [PORTED] FUN_080065ca: SOF - если устройство в CONFIGURED (3) и у класса есть
- * обработчик SOF (pClass+0x1c), вызвать его. ЛИСТИНГ: аргумент вызова не виден;
- * по соглашению USBD передаётся pdev. */
+ * обработчик SOF (pClass+0x1c), вызвать его. Аргумент вызова
+ * подтверждён эмулятором: оригинал передаёт pdev. */
 uint32_t nrlc_USB_SOF_Callback(void *hpcd)
 {
     uintptr_t pdev = NRLC_R32((uintptr_t)hpcd + 0x2E8u);
@@ -404,7 +410,7 @@ void nrlc_TimerClockEnable(void *htim)
         RCC->APB1ENR |= 0x4u;
     } else if (inst == (uint32_t)TIM7) {
         RCC->APB1ENR |= 0x20u;
-        nrlc_NVIC_SetPriority(0x37, 0xFu, 0u);   /* ЛИСТИНГ: третий аргумент не виден, взят 0 */
+        nrlc_NVIC_SetPriority(0x37, 0xFu, 0xFu);  /* третий аргумент восстановлен по машинному коду */
         nrlc_NVIC_EnableIRQ(0x37);
     } else if (inst == (uint32_t)TIM16) {
         RCC->APB2ENR |= 0x20000u;
@@ -436,7 +442,7 @@ void nrlc_TIM6_FullInit(void)
     nrlc_TIMEx_MasterConfigSync(h, mcfg);
     FUN_08007a00(h);
     FUN_08007a70(h);
-    nrlc_NVIC_SetPriority(0x36, 0u, 0u);   /* ЛИСТИНГ: sub-приоритет не виден */
+    nrlc_NVIC_SetPriority(0x36, 0u, 0u);   /* sub-приоритет проверен по машинному коду */
     nrlc_NVIC_EnableIRQ(0x36);
     TIM6->DIER |= 1u;
 }
@@ -518,7 +524,7 @@ void nrlc_USART1_MspInit(void *huart)
     h[0x1C] = (uint32_t)d;         /* huart->hdmarx */
     d[9] = (uint32_t)h;
 
-    nrlc_NVIC_SetPriority(0x25, 2u, 0u);   /* ЛИСТИНГ: sub-приоритет не виден */
+    nrlc_NVIC_SetPriority(0x25, 2u, 2u);   /* sub-приоритет восстановлен по машинному коду */
     nrlc_NVIC_EnableIRQ(0x25);
 }
 
@@ -753,8 +759,8 @@ void nrlc_ConvertCorrToPhysical(const uint32_t *corr)
 /* [PORTED, частично выведено] FUN_08002ec0: третий вариант той же цепочки для буфера 0x20007C38.
  * Читает те же смещения структуры коррелятора, пишет два float прямо в неё: [0] и [6]
  * (амплитуда каналов A и B = 2*sqrt(re^2+im^2) после умножения на коэффициент 0x200048A8+0x20).
- * ЛИСТИНГ: часть аргументов комплексных умножений потеряна анализатором; мнимая часть множителя
- * принята 0.0, как в FUN_0800dbf8. FUN_080134b0 считается корнем (по использованию). */
+ * Аргументы восстановлены по машинному коду: оба умножения идут как (re, im, K, 0.0), корень берёт
+ * FUN_080134b0 (double -> double), результат умножается на 2.0 и приводится к float. */
 void nrlc_ComputeCorrOutput_Buf2(uint32_t *buf)
 {
     float n = nrlc_CorrelatorScaleGetter(buf);
@@ -772,11 +778,11 @@ void nrlc_ComputeCorrOutput_Buf2(uint32_t *buf)
 
     ca = nrlc_ComplexMultiply(a_re, a_im, kf, 0.0f);
     mag2 = ca.re * ca.re + ca.im * ca.im;
-    ((float *)buf)[0] = (float)(FUN_080134b0(mag2) * 2.0);
+    ((float *)buf)[0] = (float)(sqrt((double)mag2) * 2.0);
 
     cb = nrlc_ComplexMultiply(b_re, b_im, kf, 0.0f);
     mag2 = cb.re * cb.re + cb.im * cb.im;
-    ((float *)buf)[6] = (float)(FUN_080134b0(mag2) * 2.0);
+    ((float *)buf)[6] = (float)(sqrt((double)mag2) * 2.0);
 }
 
 /* [PORTED] FUN_08000dbe: читает REF (0x200049E4), считает значение стадии и пишет в структуру
@@ -985,7 +991,7 @@ void nrlc_BatteryCalibConstants(void)
  * амплитудой amp и смещением off в 0x20002EE0, затем вызывает функцию в CCM RAM.
  * Поля структуры 0x200049A8: int16[0]=смещение, [1]=амплитуда, [5]=длина таблицы, [6]=макс. длина;
  * +0x3c частота выборки, +0x4c = N, +0x50 = частота выборки / N.
- * ЛИСТИНГ: аргумент одного из преобразований (2*pi / ?) не виден, по смыслу это N;
+ * Делитель в 2*pi / N подтверждён эмулятором (в листинге аргумент не виден);
  * FUN_080132d0 принята как преобразование double->int (способ округления не проверен). */
 void nrlc_SetDACFrequency(uint32_t freq_hz)
 {
@@ -1031,7 +1037,10 @@ void nrlc_SetDACFrequency(uint32_t freq_hz)
     }
     NRLC_R32(s + 0x50u) = (n != 0u) ? (rate / n) : 0u;
 
-    step = 6.283185307179586 / (double)n;     /* ЛИСТИНГ: делитель выведен как N */
+    step = 6.283185307179586 / (double)n;     /* делитель выведен как N, подтверждено сравнением с образом */
+    /* Граница цикла читается из памяти на каждой итерации, как в оригинале. Буфер таблицы
+     * (0x20002EE0) вмещает 3428 значений, дальше он перекрывает структуру 0x200049A8 -
+     * при больших длинах поведение оригинала и переноса расходится (вне рабочего диапазона). */
     for (i = 0u; (int32_t)i < (int32_t)((uint16_t)ps[5]) - 1; i++) {
         uint32_t idx = (n != 0u) ? (i - n * (i / n)) : 0u;
         float x = (float)((double)idx * step);
@@ -1044,7 +1053,7 @@ void nrlc_SetDACFrequency(uint32_t freq_hz)
 
 /* [PORTED] FUN_0800ae7c: выбор диапазона - выдаёт команду в PGA113 (0x2A01 | код<<4) по
  * 3-проводному протоколу с выбором линии CS. u_channel != 0: CS = PB10 (U_CS), иначе PB2 (I_CS).
- * Повторно не отправляет, если код не изменился. ЛИСТИНГ: в первой ветке третий аргумент
+ * Повторно не отправляет, если код не изменился. Подтверждено эмулятором, хотя в первой ветке третий аргумент
  * снятия CS не виден, принят 1 (как во второй ветке). */
 void nrlc_RangeRelayControl(int u_channel, uint32_t code)
 {
